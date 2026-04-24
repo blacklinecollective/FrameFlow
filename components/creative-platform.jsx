@@ -2595,9 +2595,10 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
 };
 
 // ── ClientGalleryView ─────────────────────────────────────────
-const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, brandKit }) => {
+const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, brandKit, photos: photosProp }) => {
   const gd      = delivery || GALLERY_DELIVERY_SEED[proj?.id] || GALLERY_DELIVERY_SEED[1];
-  const photos  = PHOTOS[proj?.id] || PHOTOS[1] || [];
+  const photos  = (photosProp && photosProp.length > 0) ? photosProp : (PHOTOS[proj?.id] || PHOTOS[1] || []);
+  const photoBg = (p) => typeof p === "string" ? p : (p?.url ? `#0e0e0e url("${p.url}") center/contain no-repeat` : "#1a1a1a");
   const favs    = clientFavorites || [];
   const flags   = clientFlags     || [];
 
@@ -2768,7 +2769,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
               return (
                 <div key={i} style={{ position:"relative", marginBottom:6, borderRadius:8, overflow:"hidden", cursor:"pointer", breakInside:"avoid", display:"block" }}
                   onClick={() => setLightbox(i)}>
-                  <div style={{ height: [160,200,140,220,180,150,200,170][i%8], background:bg, transition:"opacity .15s" }}
+                  <div style={{ height: [160,200,140,220,180,150,200,170][i%8], background:photoBg(bg), transition:"opacity .15s" }}
                     onMouseEnter={e => { e.currentTarget.style.opacity=".85"; e.currentTarget.nextSibling.style.opacity="1"; }}
                     onMouseLeave={e => { e.currentTarget.style.opacity="1"; e.currentTarget.nextSibling.style.opacity="0"; }}/>
                   {/* Hover overlay */}
@@ -2813,7 +2814,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
             <button onClick={lbPrev} style={{ position:"absolute", left:16, width:48, height:48, borderRadius:12, background:"rgba(255,255,255,.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <div style={{ width:"min(75vw,680px)", height:"min(72vh,500px)", borderRadius:12, background:photos[lightbox]||"#333", boxShadow:"0 40px 80px rgba(0,0,0,.6)" }}/>
+            <div style={{ width:"min(75vw,680px)", height:"min(72vh,500px)", borderRadius:12, background:photoBg(photos[lightbox])||"#333", boxShadow:"0 40px 80px rgba(0,0,0,.6)" }}/>
             <button onClick={lbNext} style={{ position:"absolute", right:16, width:48, height:48, borderRadius:12, background:"rgba(255,255,255,.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
@@ -3162,9 +3163,11 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
   );
 };
 
-const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags }) => {
-  const basePhotos = PHOTOS[proj.id] || [];
-  const [photos,       setPhotos]       = useState(basePhotos);
+const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp }) => {
+  const photos_init = useRef(false);
+  const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
+  // helper: get renderable background value from a photo entry
+  const photoBg = (p) => typeof p === "string" ? p : (p?.url ? `#1a1a1a url("${p.url}") center/contain no-repeat` : C.warm);
   const [thumbSize,    setThumbSize]    = useState("M");    // S | M | L
   const [layoutMode,   setLayoutMode]   = useState("masonry"); // grid | masonry | slideshow | magazine
   const [lightbox,     setLightbox]     = useState(null);   // index
@@ -3179,18 +3182,46 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
   const [dragOver,     setDragOver]     = useState(false);
   const [uploading,    setUploading]    = useState(false);
 
+  // Sync from parent when parent loads persisted photos
+  useEffect(() => {
+    if (galleryPhotosProp && galleryPhotosProp.length > 0 && !photos_init.current) {
+      setPhotos_local(galleryPhotosProp);
+      photos_init.current = true;
+    }
+  }, [galleryPhotosProp]);
+
+  // Proxy setter that writes through to AppShell
+  const setPhotos = (updater) => {
+    setPhotos_local(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (setGalleryPhotosProp) setGalleryPhotosProp(next);
+      return next;
+    });
+  };
+
   const delivery  = galleryDelivery?.[proj.id];
   const favIdxs   = clientFavorites?.[proj.id] || [];
   const flagItems = clientFlags?.[proj.id]     || [];
   const flaggedIdxs = flagItems.map(f => f.photoIndex);
 
-  const addPhotos = (count=4) => {
+  const addPhotos = (files) => {
+    if (!files || files.length === 0) return;
     setUploading(true);
-    setTimeout(() => {
-      const next = EXTRA_GRADS.slice(photos.length % EXTRA_GRADS.length).concat(EXTRA_GRADS).slice(0, count);
-      setPhotos(p => [...p, ...next]);
-      setUploading(false);
-    }, 900);
+    const fileArr = Array.from(files);
+    let loaded = 0;
+    const newPhotos = [];
+    fileArr.forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        newPhotos[idx] = { url: ev.target.result, name: file.name };
+        loaded++;
+        if (loaded === fileArr.length) {
+          setPhotos(p => [...p, ...newPhotos.filter(Boolean)]);
+          setUploading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
   const cols = { S:6, M:3, L:2 }[thumbSize] || 3;
@@ -3252,7 +3283,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
 
         <label style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"#fff", border:`1px dashed ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.muted }}>
           <Ic d={P.upload} size={13}/> {uploading ? "Uploading…" : "Upload Photos"}
-          <input type="file" multiple accept="image/*" style={{ display:"none" }} onChange={() => addPhotos(4)}/>
+          <input id={`gallery-upload-${proj.id}`} type="file" multiple accept="image/*,video/*" style={{ display:"none" }} onChange={e => { addPhotos(e.target.files); e.target.value=""; }}/>
         </label>
       </div>
 
@@ -3261,9 +3292,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         <div
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={e => { e.preventDefault(); setDragOver(false); addPhotos(6); }}
+          onDrop={e => { e.preventDefault(); setDragOver(false); addPhotos(e.dataTransfer.files); }}
           style={{ border:`2px dashed ${dragOver?C.ink:C.border}`, borderRadius:16, padding:"60px 40px", textAlign:"center", background:dragOver?C.warm:C.cream, transition:"all .2s", cursor:"pointer" }}
-          onClick={() => addPhotos(6)}>
+          onClick={() => document.getElementById(`gallery-upload-${proj.id}`)?.click()}>
           <div style={{ width:64, height:64, borderRadius:18, background:C.warm, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
             <Ic d={P.upload} size={28} style={{ color:C.muted }}/>
           </div>
@@ -3281,8 +3312,8 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         <div
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={e => { e.preventDefault(); setDragOver(false); addPhotos(4); }}
-          onClick={() => addPhotos(4)}
+          onDrop={e => { e.preventDefault(); setDragOver(false); addPhotos(e.dataTransfer.files); }}
+          onClick={() => document.getElementById(`gallery-upload-${proj.id}`)?.click()}
           style={{ border:`2px dashed ${dragOver?C.ink:C.border}`, borderRadius:12, padding:"14px 20px", textAlign:"center", background:dragOver?C.warm:"transparent", cursor:"pointer", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"all .2s" }}>
           <Ic d={P.plus} size={15} style={{ color:C.muted }}/>
           <span style={{ fontSize:13, color:C.muted }}>{uploading ? "Uploading…" : "Drag photos here or click to add more"}</span>
@@ -3341,7 +3372,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:6 }}>
           {photos.map((bg,i) => (
             <div key={i} onClick={() => setLightbox(i)}
-              style={{ height:tileH, borderRadius:8, background:bg, cursor:"pointer", overflow:"hidden", position:"relative", transition:"transform .15s, opacity .15s" }}
+              style={{ height:tileH, borderRadius:8, background:photoBg(bg), cursor:"pointer", overflow:"hidden", position:"relative", transition:"transform .15s, opacity .15s" }}
               onMouseEnter={e => e.currentTarget.style.transform="scale(1.02)"}
               onMouseLeave={e => e.currentTarget.style.transform="scale(1)"}>
               <div style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(255,255,255,.85)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s" }}
@@ -3370,7 +3401,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         <div className="gallery-grid">
           {photos.map((bg,i) => (
             <div key={i} onClick={() => setLightbox(i)}
-              style={{ height:HEIGHTS[i%HEIGHTS.length], borderRadius:10, background:bg, cursor:"pointer", position:"relative", overflow:"hidden", transition:"opacity .2s", marginBottom:0 }}
+              style={{ height:HEIGHTS[i%HEIGHTS.length], borderRadius:10, background:photoBg(bg), cursor:"pointer", position:"relative", overflow:"hidden", transition:"opacity .2s", marginBottom:0 }}
               onMouseEnter={e => { e.currentTarget.style.opacity=".88"; }}
               onMouseLeave={e => { e.currentTarget.style.opacity="1"; }}>
               <button onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}
@@ -3396,7 +3427,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {/* ── SLIDESHOW layout ── */}
       {photos.length > 0 && layoutMode === "slideshow" && (
         <div>
-          <div style={{ position:"relative", borderRadius:14, overflow:"hidden", height:480, background:photos[lightbox??0], display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px" }}>
+          <div style={{ position:"relative", borderRadius:14, overflow:"hidden", height:480, background:photoBg(photos[lightbox??0]), display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px" }}>
             <button onClick={lbPrev} style={{ width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
               <Ic d={P.rewind} size={18}/>
             </button>
@@ -3413,7 +3444,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           <div style={{ display:"flex", gap:6, marginTop:10, overflowX:"auto", paddingBottom:4 }}>
             {photos.map((bg,i) => (
               <div key={i} onClick={() => setLightbox(i)}
-                style={{ width:60, height:44, borderRadius:7, background:bg, flexShrink:0, cursor:"pointer", border:`2px solid ${(lightbox??0)===i?C.ink:"transparent"}`, transition:"border .15s" }}/>
+                style={{ width:60, height:44, borderRadius:7, background:photoBg(bg), flexShrink:0, cursor:"pointer", border:`2px solid ${(lightbox??0)===i?C.ink:"transparent"}`, transition:"border .15s" }}/>
             ))}
           </div>
         </div>
@@ -3422,7 +3453,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {/* ── MAGAZINE layout ── */}
       {photos.length > 0 && layoutMode === "magazine" && (
         <div>
-          <div style={{ borderRadius:14, overflow:"hidden", height:360, background:photos[0], cursor:"pointer", marginBottom:8, position:"relative" }} onClick={() => setLightbox(0)}>
+          <div style={{ borderRadius:14, overflow:"hidden", height:360, background:photoBg(photos[0]), cursor:"pointer", marginBottom:8, position:"relative" }} onClick={() => setLightbox(0)}>
             <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"24px 24px 20px", background:"linear-gradient(to top, rgba(0,0,0,.6), transparent)" }}>
               <p style={{ color:"#fff", fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{proj.name}</p>
               <p style={{ color:"rgba(255,255,255,.7)", fontSize:12, margin:"4px 0 0" }}>{proj.type} · {photos.length} photos</p>
@@ -3431,7 +3462,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(cols+1,5)},1fr)`, gap:8 }}>
             {photos.slice(1).map((bg,i) => (
               <div key={i} onClick={() => setLightbox(i+1)}
-                style={{ height:tileH * 0.75, borderRadius:9, background:bg, cursor:"pointer", transition:"opacity .15s" }}
+                style={{ height:tileH * 0.75, borderRadius:9, background:photoBg(bg), cursor:"pointer", transition:"opacity .15s" }}
                 onMouseEnter={e => e.currentTarget.style.opacity=".8"}
                 onMouseLeave={e => e.currentTarget.style.opacity="1"}/>
             ))}
@@ -3447,7 +3478,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
             style={{ position:"absolute", left:24, width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <Ic d={P.rewind} size={20} style={{ color:"#fff" }}/>
           </button>
-          <div onClick={e => e.stopPropagation()} style={{ width:"min(80vw,700px)", height:"min(80vh,520px)", borderRadius:16, background:photos[lightbox], boxShadow:"0 40px 100px rgba(0,0,0,.5)", position:"relative" }}>
+          <div onClick={e => e.stopPropagation()} style={{ width:"min(80vw,700px)", height:"min(80vh,520px)", borderRadius:16, background:photoBg(photos[lightbox]), boxShadow:"0 40px 100px rgba(0,0,0,.5)", position:"relative" }}>
             <div style={{ position:"absolute", top:12, right:12, display:"flex", gap:8 }}>
               <button onClick={() => setDownloaded(d=>({...d,[lightbox]:true}))}
                 style={{ width:36, height:36, borderRadius:9, background:"rgba(255,255,255,.9)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -4113,7 +4144,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -5303,7 +5334,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         })()}
 
         {/* ── GALLERY ── */}
-        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags}/>}
+        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))}/>}
         {/* ── PLANNING ── */}
         {tab === "planning" && <ProjectPlanningTab proj={proj}/>}
 
@@ -5827,9 +5858,35 @@ const Galleries = () => {
 };
 
 // ── Storyboard ────────────────────────────────────────────────
-const Storyboard = () => {
-  const [frames,       setFrames]       = useState([]);
-  const [mediaLib,     setMediaLib]     = useState([]);
+const Storyboard = ({ appSbFrames, setAppSbFrames, appSbMedia, setAppSbMedia }) => {
+  const [frames,       setFrames_local]   = useState([]);
+  const [mediaLib,     setMediaLib_local] = useState([]);
+  const frames_init = useRef(false);
+  const media_init  = useRef(false);
+  useEffect(() => {
+    if (appSbFrames && appSbFrames.length > 0 && !frames_init.current) {
+      setFrames_local(appSbFrames); frames_init.current = true;
+    }
+  }, [appSbFrames]);
+  useEffect(() => {
+    if (appSbMedia && appSbMedia.length > 0 && !media_init.current) {
+      setMediaLib_local(appSbMedia); media_init.current = true;
+    }
+  }, [appSbMedia]);
+  const setFrames = (updater) => {
+    setFrames_local(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (setAppSbFrames) setAppSbFrames(next);
+      return next;
+    });
+  };
+  const setMediaLib = (updater) => {
+    setMediaLib_local(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (setAppSbMedia) setAppSbMedia(next);
+      return next;
+    });
+  };
   const [showAdd,      setShowAdd]      = useState(false);
   const [showMedia,    setShowMedia]    = useState(false);
   const [editFrame,    setEditFrame]    = useState(null); // frame being edited
@@ -8543,9 +8600,35 @@ const FormsPage = ({ autoSentForms = [] }) => {
 };
 
 // ── Proposals & Service Packages ──────────────────────────────
-const ProposalsPage = () => {
-  const [proposals,  setProposals]  = useState(INITIAL_PROPOSALS);
-  const [packages,   setPackages]   = useState(INITIAL_SERVICE_PACKAGES);
+const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPackages }) => {
+  const [proposals,  setProposals_local]  = useState([]);
+  const [packages,   setPackages_local]   = useState(INITIAL_SERVICE_PACKAGES);
+  const proposals_init = useRef(false);
+  const packages_init  = useRef(false);
+  useEffect(() => {
+    if (appProposals && appProposals.length > 0 && !proposals_init.current) {
+      setProposals_local(appProposals); proposals_init.current = true;
+    }
+  }, [appProposals]);
+  useEffect(() => {
+    if (appPackages && appPackages.length > 0 && !packages_init.current) {
+      setPackages_local(appPackages); packages_init.current = true;
+    }
+  }, [appPackages]);
+  const setProposals = (updater) => {
+    setProposals_local(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (setAppProposals) setAppProposals(next);
+      return next;
+    });
+  };
+  const setPackages = (updater) => {
+    setPackages_local(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (setAppPackages) setAppPackages(next);
+      return next;
+    });
+  };
   const [tab,        setTab]        = useState("proposals");
   const [detail,     setDetail]     = useState(null);
   const [pkgDetail,  setPkgDetail]  = useState(null);
@@ -8708,10 +8791,90 @@ const ProposalsPage = () => {
     <div style={{ flex:1, height:2, borderRadius:2, background: done ? "#5c7a68" : C.border, marginBottom:20 }}/>
   );
 
-  // ── PACKAGE EDITOR PANEL ─────────────────────────────────────
-  const PkgEditorPanel = () => {
-    if (!pkgDetail) return null;
-    return (
+  // PkgEditorPanel is rendered inline in the return to avoid remount-on-keystroke bug
+
+  // NewProposalModal rendered inline in return to prevent remount-on-keystroke
+
+  return (
+    <>
+
+    {/* ── NEW PROPOSAL MODAL (inline) ── */}
+    {newModal && (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:700, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
+        onClick={()=>setNewModal(false)}>
+        <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 80px rgba(0,0,0,.25)" }}
+          onClick={e=>e.stopPropagation()}>
+          <div style={{ padding:"26px 28px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div>
+              <h3 style={{ fontSize:18, fontWeight:600, color:C.ink, margin:0 }}>New Proposal</h3>
+              <p style={{ fontSize:12, color:C.muted, margin:"4px 0 0" }}>Build a proposal and send package options to your client</p>
+            </div>
+            <button onClick={()=>setNewModal(false)} style={{ width:32,height:32,borderRadius:"50%",background:C.warm,border:"none",cursor:"pointer",fontSize:18,color:C.muted }}>×</button>
+          </div>
+          <div style={{ padding:"24px 28px", display:"flex", flexDirection:"column", gap:16 }}>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Proposal Title</label>
+              <input value={nTitle} onChange={e=>setNTitle(e.target.value)} placeholder="e.g. Wedding Photography — Smith Wedding"
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Client Name</label>
+              <input value={nClient} onChange={e=>setNClient(e.target.value)} placeholder="e.g. Sarah & James Smith"
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Project Name</label>
+              <input value={nProject} onChange={e=>setNProject(e.target.value)} placeholder="e.g. Smith Wedding (optional)"
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Personal Message (optional)</label>
+              <textarea value={nMsg} onChange={e=>setNMsg(e.target.value)} rows={3}
+                placeholder="Write a warm intro for your client — what you're excited about, what to expect..."
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none", resize:"none", fontFamily:"inherit" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:8 }}>Include Packages (select 1–3)</label>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {packages.map(pkg => {
+                  const sel = nPkgs.includes(pkg.id);
+                  return (
+                    <div key={pkg.id} onClick={()=>toggleNPkg(pkg.id)}
+                      style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:10,
+                        border:`2px solid ${sel?pkg.color:C.border}`, background: sel?`${pkg.color}0d`:"#fff", cursor:"pointer", transition:"all .15s" }}>
+                      <div style={{ width:14,height:14,borderRadius:3,background:sel?pkg.color:"#fff",border:`2px solid ${sel?pkg.color:C.border}`,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center" }}>
+                        {sel && <span style={{ fontSize:9, color:"#fff", fontWeight:700 }}>✓</span>}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ fontSize:13, fontWeight:600, color:C.ink }}>{pkg.name}</span>
+                          {pkg.popular && <span style={{ fontSize:10, fontWeight:600, color:pkg.color, background:`${pkg.color}1a`, padding:"1px 7px", borderRadius:99 }}>Popular</span>}
+                        </div>
+                        <span style={{ fontSize:12, color:C.muted }}>{pkg.description}</span>
+                      </div>
+                      <span style={{ fontSize:14, fontWeight:700, color: sel?pkg.color:C.ink }}>${pkg.price.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <button onClick={()=>saveProposal(true)}
+                style={{ flex:1, padding:"11px 0", border:`1px solid ${C.border}`, background:"#fff", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", color:C.muted }}>
+                Save as Draft
+              </button>
+              <button onClick={()=>saveProposal(false)} disabled={!nTitle.trim()||!nClient.trim()||nPkgs.length===0}
+                style={{ flex:2, padding:"11px 0", background:(nTitle.trim()&&nClient.trim()&&nPkgs.length>0)?C.ink:"#ccc", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:(nTitle.trim()&&nClient.trim()&&nPkgs.length>0)?"pointer":"not-allowed" }}>
+                Send Proposal →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── PACKAGE EDITOR PANEL (inline to prevent remount-on-keystroke) ── */}
+    {pkgDetail && (
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:600, display:"flex", alignItems:"stretch", justifyContent:"flex-end" }}
         onClick={()=>setPkgDetail(null)}>
         <div style={{ background:"#fff", width:"100%", maxWidth:480, overflowY:"auto", display:"flex", flexDirection:"column" }}
@@ -8745,15 +8908,18 @@ const ProposalsPage = () => {
                 ))}
               </div>
             </div>
-            {/* Fields */}
-            {[["Package Name", eName, setEName, "e.g. Standard, Premium, Brand Essentials"],
-              ["Price ($)", ePrice, setEPrice, "e.g. 2800"]].map(([lbl,val,set,ph])=>(
-              <div key={lbl}>
-                <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>{lbl}</label>
-                <input value={val} onChange={e=>set(e.target.value)} placeholder={ph}
-                  style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
-              </div>
-            ))}
+            {/* Name + Price */}
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Package Name</label>
+              <input value={eName} onChange={e=>setEName(e.target.value)} placeholder="e.g. Standard, Premium, Brand Essentials"
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Price ($)</label>
+              <input value={ePrice} onChange={e=>setEPrice(e.target.value)} placeholder="e.g. 2800"
+                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            {/* Description */}
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Short Description</label>
               <textarea value={eDesc} onChange={e=>setEDesc(e.target.value)} rows={2} placeholder="Describe who this package is best for..."
@@ -8786,87 +8952,7 @@ const ProposalsPage = () => {
           </div>
         </div>
       </div>
-    );
-  };
-
-  // ── NEW PROPOSAL MODAL ────────────────────────────────────────
-  const NewProposalModal = () => {
-    if (!newModal) return null;
-    return (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:700, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
-        onClick={()=>setNewModal(false)}>
-        <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 80px rgba(0,0,0,.25)" }}
-          onClick={e=>e.stopPropagation()}>
-          <div style={{ padding:"26px 28px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <div>
-              <h3 style={{ fontSize:18, fontWeight:600, color:C.ink, margin:0 }}>New Proposal</h3>
-              <p style={{ fontSize:12, color:C.muted, margin:"4px 0 0" }}>Build a proposal and send package options to your client</p>
-            </div>
-            <button onClick={()=>setNewModal(false)} style={{ width:32,height:32,borderRadius:"50%",background:C.warm,border:"none",cursor:"pointer",fontSize:18,color:C.muted }}>×</button>
-          </div>
-          <div style={{ padding:"24px 28px", display:"flex", flexDirection:"column", gap:16 }}>
-            {[["Proposal Title", nTitle, setNTitle, "e.g. Wedding Photography — Smith Wedding"],
-              ["Client Name",    nClient, setNClient, "e.g. Sarah & James Smith"],
-              ["Project Name",   nProject,setNProject,"e.g. Smith Wedding (optional)"]].map(([lbl,val,set,ph])=>(
-              <div key={lbl}>
-                <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>{lbl}</label>
-                <input value={val} onChange={e=>set(e.target.value)} placeholder={ph}
-                  style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
-              </div>
-            ))}
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Personal Message (optional)</label>
-              <textarea value={nMsg} onChange={e=>setNMsg(e.target.value)} rows={3}
-                placeholder="Write a warm intro for your client — what you're excited about, what to expect..."
-                style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none", resize:"none", fontFamily:"inherit" }}/>
-            </div>
-            {/* Package selector */}
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:8 }}>Include Packages (select 1–3)</label>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {packages.map(pkg => {
-                  const sel = nPkgs.includes(pkg.id);
-                  return (
-                    <div key={pkg.id} onClick={()=>toggleNPkg(pkg.id)}
-                      style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:10,
-                        border:`2px solid ${sel?pkg.color:C.border}`, background: sel?`${pkg.color}0d`:"#fff", cursor:"pointer", transition:"all .15s" }}>
-                      <div style={{ width:14,height:14,borderRadius:3,background:sel?pkg.color:"#fff",border:`2px solid ${sel?pkg.color:C.border}`,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center" }}>
-                        {sel && <span style={{ fontSize:9, color:"#fff", fontWeight:700 }}>✓</span>}
-                      </div>
-                      <div style={{ flex:1 }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          <span style={{ fontSize:13, fontWeight:600, color:C.ink }}>{pkg.name}</span>
-                          {pkg.popular && <span style={{ fontSize:10, fontWeight:600, color:pkg.color, background:`${pkg.color}1a`, padding:"1px 7px", borderRadius:99 }}>Popular</span>}
-                        </div>
-                        <span style={{ fontSize:12, color:C.muted }}>{pkg.description}</span>
-                      </div>
-                      <span style={{ fontSize:14, fontWeight:700, color: sel?pkg.color:C.ink }}>${pkg.price.toLocaleString()}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <button onClick={()=>saveProposal(true)}
-                style={{ flex:1, padding:"11px 0", border:`1px solid ${C.border}`, background:"#fff", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", color:C.muted }}>
-                Save as Draft
-              </button>
-              <button onClick={()=>saveProposal(false)} disabled={!nTitle.trim()||!nClient.trim()||nPkgs.length===0}
-                style={{ flex:2, padding:"11px 0", background: (nTitle.trim()&&nClient.trim()&&nPkgs.length>0)?C.ink:"#ccc", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:(nTitle.trim()&&nClient.trim()&&nPkgs.length>0)?"pointer":"not-allowed" }}>
-                Send Proposal →
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <>
-
-    {/* ── NEW PROPOSAL MODAL ── */}
-    <NewProposalModal/>
+    )}
 
     {/* ── PROPOSAL DETAIL PANEL (3-step flow) ── */}
     {detail && dp && (
@@ -9647,11 +9733,15 @@ const ProposalsPage = () => {
                       </div>
                     ))}
                   </div>
-                  <div style={{ display:"flex", gap:8 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <button onClick={()=>openPkgEditor(pkg)} style={{ flex:1, padding:"8px 0", border:`1px solid ${C.border}`, background:"#fff", borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.ink }}>Edit</button>
-                    <button onClick={()=>{ setNPkgs([pkg.id]); setNewModal(true); }}
-                      style={{ flex:1, padding:"8px 0", background:pkg.color, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>Use in Proposal</button>
+                    <button onClick={()=>{ const dup={...pkg,id:`PKG${String(packages.length+1).padStart(3,"0")}`,name:pkg.name+" (Copy)"}; setPackages(prev=>[...prev,dup]); }}
+                      style={{ flex:1, padding:"8px 0", border:`1px solid ${C.border}`, background:"#fff", borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.muted }}>Duplicate</button>
+                    <button onClick={()=>{ if(window.confirm(`Delete "${pkg.name}"?`)) setPackages(prev=>prev.filter(p=>p.id!==pkg.id)); }}
+                      style={{ padding:"8px 12px", border:`1px solid #fecaca`, background:"#fff", borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:"#c0594a" }}>Delete</button>
                   </div>
+                  <button onClick={()=>{ setNPkgs([pkg.id]); openNewProposal(); }}
+                    style={{ width:"100%", marginTop:8, padding:"9px 0", background:pkg.color, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>Use in Proposal →</button>
                 </div>
               </div>
             ))}
@@ -16466,9 +16556,9 @@ const Community = ({ commNotifs, setCommNotifs, brandKit, supabaseSession }) => 
     try {
       const ext = file.name.split(".").pop();
       const path = `community/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { data, error } = await supabase.storage.from("media").upload(path, file, { upsert: true });
+      const { data, error } = await supabase.storage.from("Media").upload(path, file, { upsert: true });
       if (!error && data) {
-        const { data: { publicUrl } } = supabase.storage.from("media").getPublicUrl(data.path);
+        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
         setNewPhoto(publicUrl); // replace local preview with persisted URL
       }
       // If upload fails, local base64 preview is still shown — no disruption to user
@@ -22838,8 +22928,16 @@ const ClientDashboard = ({
   );
 };
 
-const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags }) => {
-  const proj       = PROJECTS.find(p => p.id === projId) || PROJECTS[0];
+const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos }) => {
+  const allProjects = (appProjects && appProjects.length > 0) ? appProjects : PROJECTS;
+  const proj       = allProjects.find(p => p.id === projId) || allProjects[0];
+  if (!proj) return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"60vh", gap:12 }}>
+      <p style={{ fontSize:16, fontWeight:600, color:C.ink }}>No project found</p>
+      <p style={{ fontSize:13, color:C.muted }}>Create a project first, then view it here.</p>
+      <button onClick={onBack} style={{ padding:"9px 20px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:13, fontWeight:600, cursor:"pointer" }}>← Back to Projects</button>
+    </div>
+  );
   const photos     = PHOTOS[proj.id] || [];
   const invoices   = INVOICES.filter(i => i.project === proj.name);
   const [tab,      setTab]      = useState("home");
@@ -23070,6 +23168,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
             clientFlags={clientFlags?.[proj.id] || []}
             setClientFlags={flags => setClientFlags && setClientFlags(prev => ({...prev, [proj.id]: typeof flags==="function" ? flags(prev[proj.id]||[]) : flags}))}
             brandKit={brandKit}
+            photos={galleryPhotos?.[proj.id] || []}
           />
         )}
 
@@ -23740,6 +23839,12 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [tmFileSubmissions,setTmFileSubmissions]= useState(TM_FILES_SEED);
   const [showTMLogin,      setShowTMLogin]      = useState(false);
 
+  const [appProposals,   setAppProposals]   = useState([]);
+  const [appPackages,    setAppPackages]    = useState(INITIAL_SERVICE_PACKAGES);
+  const [appSbFrames,    setAppSbFrames]    = useState([]);
+  const [appSbMedia,     setAppSbMedia]     = useState([]);
+  const [galleryPhotos,  setGalleryPhotos]  = useState({}); // { [projId]: [{url,name}] }
+
   const userId = supabaseSession?.user?.id;
   const [dbLoaded, setDbLoaded] = useState(false);
 
@@ -23754,6 +23859,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.crm_clients  && data.crm_clients.length)  setCrmClients(data.crm_clients);
         if (data.bookings     && data.bookings.length)     setBookings(data.bookings);
         if (data.cal_events   && data.cal_events.length)   setCalEvents(data.cal_events);
+        if (data.proposals    && data.proposals.length)    setAppProposals(data.proposals);
+        if (data.packages     && data.packages.length)     setAppPackages(data.packages);
+        if (data.sb_frames    && data.sb_frames.length)    setAppSbFrames(data.sb_frames);
+        if (data.sb_media     && data.sb_media.length)     setAppSbMedia(data.sb_media);
+        if (data.gallery_photos && Object.keys(data.gallery_photos).length) setGalleryPhotos(data.gallery_photos);
       }
       setDbLoaded(true);
     });
@@ -23769,8 +23879,13 @@ function AppShell({ supabaseSession, supabaseClient }) {
       crm_clients: crmClients,
       bookings,
       cal_events:  calEvents,
+      proposals:   appProposals,
+      packages:    appPackages,
+      sb_frames:   appSbFrames,
+      sb_media:    appSbMedia,
+      gallery_photos: galleryPhotos,
     });
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, dbLoaded]);
+  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, dbLoaded]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
@@ -23816,11 +23931,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
-    proposals: <ProposalsPage/>,
+    proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages}/>,
     forms:     <FormsPage autoSentForms={sentForms}/>,
     inbox:     <Inquiries emailTemplates={emailTemplates} brandKit={brandKit}/>,
     calendar:  <CalendarPage availability={availability} setAvailability={setAvailability} bookings={bookings} setBookings={setBookings} calEvents={calEvents} setCalEvents={setCalEvents}/>,
@@ -23829,10 +23944,10 @@ function AppShell({ supabaseSession, supabaseClient }) {
     analytics: <Analytics/>,
     finance:   <Finance appInvoices={appInvoices} setAppInvoices={setAppInvoices} appProjects={appProjects}/>,
     website:   <WebsiteBuilder/>,
-    storyboard:  <Storyboard/>,
+    storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags}/>,
+    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit}/>,
   };
 
