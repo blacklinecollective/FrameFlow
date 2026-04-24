@@ -3897,13 +3897,16 @@ const blankForm = () => ({
 const fmtDate = d => { if(!d) return "—"; const p=d.split("-"); return new Date(p[0],p[1]-1,p[2]).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}); };
 const fmtMoney = n => isNaN(+n)||n===""?"—":"$" + (+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 
-const ProjectInvoiceTab = ({ proj, projInvoices }) => {
+const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
   const [view,    setView]    = useState("list");   // list | template | form | preview
   const [tmplId,  setTmplId]  = useState(null);
   const [form,    setForm]    = useState(blankForm);
   const [items,   setItems]   = useState([{desc:"",qty:1,rate:""}]);
   const [selInv,  setSelInv]  = useState(null);
   const [printed, setPrinted] = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [emailing,setEmailing]= useState(false);
+  const [emailSent,setEmailSent]=useState(false);
 
   const F = (k,v) => setForm(f => ({...f,[k]:v}));
   const stTax = STATE_TAX[form.taxState] || {rate:0,note:""};
@@ -3927,7 +3930,49 @@ const ProjectInvoiceTab = ({ proj, projInvoices }) => {
     setView("form");
   };
 
-  const resetToList = () => { setView("list"); setTmplId(null); setSelInv(null); };
+  const resetToList = () => { setView("list"); setTmplId(null); setSelInv(null); setSaved(false); setEmailSent(false); };
+
+  const saveInvoice = () => {
+    if (!setAppInvoices) return;
+    const subtotalVal  = items.reduce((s,it) => s + (+(it.qty||0)) * (+(it.rate||0)), 0);
+    const discAmtVal   = +(form.discount||0);
+    const afterDiscVal = subtotalVal - discAmtVal;
+    const taxAmtVal    = +(afterDiscVal * (+(form.taxRate||0)) / 100).toFixed(2);
+    const depositAmtVal= +(form.depositPaid||0);
+    const balanceDueVal= afterDiscVal + taxAmtVal - depositAmtVal;
+    const invObj = {
+      id:        form.invNum || `INV-${Date.now()}`,
+      project:   proj.name,
+      projId:    proj.id,
+      client:    form.clientName || proj.client || "",
+      clientEmail: form.clientEmail || "",
+      status:    "Pending",
+      issued:    fmtDate(form.invDate),
+      due:       fmtDate(form.dueDate),
+      items:     items.map(it => ({ desc: it.desc, qty: +(it.qty||1), rate: +(it.rate||0) })),
+      total:     balanceDueVal,
+      subtotal:  subtotalVal,
+      discAmt:   discAmtVal,
+      taxAmt:    taxAmtVal,
+      depositAmt:depositAmtVal,
+      form:      { ...form },
+      memo:      form.notes,
+      createdAt: new Date().toISOString(),
+    };
+    setAppInvoices(prev => {
+      const existing = (prev||[]).findIndex(i => i.id === invObj.id);
+      if (existing >= 0) {
+        const updated = [...prev]; updated[existing] = invObj; return updated;
+      }
+      return [...(prev||[]), invObj];
+    });
+    setSaved(true);
+  };
+
+  const emailInvoice = () => {
+    setEmailing(true);
+    setTimeout(() => { setEmailing(false); setEmailSent(true); }, 1400);
+  };
 
   // ── INPUT STYLE ──
   const inp = (extra={}) => ({
@@ -4181,7 +4226,10 @@ const ProjectInvoiceTab = ({ proj, projInvoices }) => {
               <span className="serif" style={{ fontSize:24, fontWeight:600, color:C.ink }}>{fmtMoney(balanceDue)}</span>
             </div>
           </Card>
-          <Btn icon="eye" style={{ width:"100%", justifyContent:"center" }} onClick={() => setView("preview")}>Preview & Print</Btn>
+          <Btn icon="eye" style={{ width:"100%", justifyContent:"center", marginBottom:8 }} onClick={() => setView("preview")}>Preview & Print</Btn>
+          <button onClick={() => { saveInvoice(); setView("preview"); }} style={{ width:"100%", padding:"10px 0", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:13, fontWeight:500, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+            <Ic d={P.down} size={14} style={{ color:"#fff" }}/> Save Invoice
+          </button>
         </div>
       </div>
     </div>
@@ -4192,12 +4240,21 @@ const ProjectInvoiceTab = ({ proj, projInvoices }) => {
     const accentBar = "#1a1a1a";
     return (
       <div>
-        <div style={{ display:"flex", gap:10, marginBottom:20 }}>
+        <div style={{ display:"flex", gap:10, marginBottom:20, alignItems:"center", flexWrap:"wrap" }}>
           {tmplId && <button onClick={() => setView("form")} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← Edit Invoice</button>}
           {!tmplId && <button onClick={resetToList} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← Back to Invoices</button>}
           <div style={{ flex:1 }}/>
+          {/* Save Invoice */}
+          <button onClick={saveInvoice} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:saved?"#4a7a57":"#fff", color:saved?"#fff":C.ink, border:`1px solid ${saved?"#4a7a57":C.border}`, borderRadius:9, fontSize:13, fontWeight:500, cursor:"pointer", transition:"all .2s" }}>
+            {saved ? <><Ic d={P.check} size={14} style={{ color:"#fff" }}/> Saved!</> : <><Ic d={P.down} size={14} style={{ color:C.ink }}/> Save Invoice</>}
+          </button>
+          {/* Email to Client */}
+          <button onClick={emailInvoice} disabled={emailing} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:emailSent?"#4a7a57":"#fff", color:emailSent?"#fff":C.ink, border:`1px solid ${emailSent?"#4a7a57":C.border}`, borderRadius:9, fontSize:13, fontWeight:500, cursor:"pointer", transition:"all .2s", opacity:emailing?0.7:1 }}>
+            {emailSent ? <><Ic d={P.check} size={14} style={{ color:"#fff" }}/> Email Sent!</> : emailing ? "Sending…" : <><Ic d={P.send} size={14} style={{ color:C.ink }}/> Email to Client</>}
+          </button>
+          {/* Print */}
           <button onClick={() => window.print()} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:13, fontWeight:500, cursor:"pointer" }}>
-            <Ic d={P.down} size={14} style={{ color:"#fff" }}/>  Print / Save PDF
+            <Ic d={P.down} size={14} style={{ color:"#fff" }}/> Print / PDF
           </button>
         </div>
 
@@ -4337,7 +4394,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, appInvoices, setAppInvoices }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -4525,7 +4582,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
   if (proj) {
     const msgThread = threads.find(m => m.project === proj.name);
-    const projInvoices = INVOICES.filter(i => i.project === proj.name);
+    const projInvoices = (appInvoices || []).filter(i => i.project === proj.name);
     const projContracts = contracts.filter(c => c.project === proj.name);
     const photos = PHOTOS[proj.id] || [];
 
@@ -5146,7 +5203,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         )}
 
         {/* ── INVOICES ── */}
-        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices}/>}
+        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} setAppInvoices={setAppInvoices}/>}
 
         {/* ── PROFITABILITY ── */}
         {tab === "profitability" && (
@@ -23182,7 +23239,7 @@ const ClientDashboard = ({
   );
 };
 
-const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos }) => {
+const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices }) => {
   const allProjects = (appProjects && appProjects.length > 0) ? appProjects : PROJECTS;
   const proj       = allProjects.find(p => p.id === projId) || allProjects[0];
   if (!proj) return (
@@ -23193,7 +23250,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     </div>
   );
   const photos     = PHOTOS[proj.id] || [];
-  const invoices   = INVOICES.filter(i => i.project === proj.name);
+  const invoices   = (appInvoices || []).filter(i => i.project === proj.name || i.projId === proj.id);
   const [tab,      setTab]      = useState("home");
   const [msgDraft, setMsgDraft] = useState("");
   const [msgs,     setMsgs]     = useState([
@@ -23217,6 +23274,12 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     setTimeout(() => {
       setPayStep("done");
       setPaidInvoices(prev => [...prev, payModal.id]);
+      // Also persist the paid status back to appInvoices
+      if (setAppInvoices) {
+        setAppInvoices(prev => (prev||[]).map(inv =>
+          inv.id === payModal.id ? { ...inv, status: "Paid" } : inv
+        ));
+      }
     }, 1800);
   };
 
@@ -23507,52 +23570,128 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
                 <p style={{ fontSize:15, color:C.muted }}>No invoices yet for this project.</p>
               </div>
             ) : (
-              <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
                 {invoices.map(inv => {
-                  const total = inv.items.reduce((s,it) => s + it.qty*it.rate, 0);
-                  const isPaid = inv.status === "Paid";
+                  const f = inv.form || {};
+                  const isPaid = inv.status === "Paid" || paidInvoices.includes(inv.id);
                   const isOverdue = inv.status === "Overdue";
+                  const balanceDue = inv.total != null ? inv.total : inv.items.reduce((s,it) => s + it.qty*it.rate, 0);
+                  const subtotal = inv.subtotal != null ? inv.subtotal : inv.items.reduce((s,it) => s + it.qty*it.rate, 0);
+                  const hasBreakdown = inv.discAmt > 0 || inv.taxAmt > 0 || inv.depositAmt > 0;
                   return (
-                    <div key={inv.id} style={{ background:"#fff", borderRadius:16, border:`1px solid ${isOverdue?"#f4c0b8":isPaid?"#c3d9c3":C.border}`, padding:28, boxShadow:isOverdue?"0 0 0 3px #fdf0ed":"none" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+                    <div key={inv.id} style={{ background:"#fff", borderRadius:18, border:`1px solid ${isOverdue?"#f4c0b8":isPaid?"#c3d9c3":C.border}`, overflow:"hidden", boxShadow:isOverdue?"0 0 0 3px #fdf0ed":"0 2px 12px rgba(0,0,0,.04)" }}>
+                      {/* Invoice header bar */}
+                      <div style={{ background:isPaid?"#4a7a57":isOverdue?"#b05c3a":"#1a1a1a", padding:"20px 28px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                         <div>
-                          <p style={{ fontSize:16, fontWeight:600, color:C.ink, margin:0 }}>{inv.id}</p>
-                          <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>Issued {inv.issued} · Due {inv.due}</p>
+                          <p style={{ fontSize:11, fontWeight:700, color:"rgba(255,255,255,.6)", textTransform:"uppercase", letterSpacing:1, margin:"0 0 4px" }}>Invoice</p>
+                          <p style={{ fontSize:18, fontWeight:600, color:"#fff", margin:0, fontFamily:"monospace" }}>{inv.id}</p>
+                          {f.bizName && <p style={{ fontSize:12, color:"rgba(255,255,255,.65)", margin:"6px 0 0" }}>{f.bizName}</p>}
                         </div>
-                        <span style={{ fontSize:12, fontWeight:700, padding:"4px 12px", borderRadius:99,
-                          background:isPaid?"#edf0ec":isOverdue?"#fdf0ed":"#fff8ec",
-                          color:isPaid?C.green:isOverdue?"#b05c3a":"#9e7850",
-                          border:`1px solid ${isPaid?"#c3ccc0":isOverdue?"#f4c0b8":"#f4d98a"}` }}>
-                          {inv.status}
-                        </span>
+                        <div style={{ textAlign:"right" }}>
+                          <span style={{ fontSize:11, fontWeight:700, padding:"4px 12px", borderRadius:99, background:"rgba(255,255,255,.15)", color:"#fff", display:"inline-block", marginBottom:8 }}>
+                            {isPaid ? "✓ Paid" : isOverdue ? "Overdue" : "Pending"}
+                          </span>
+                          <div style={{ fontSize:11, color:"rgba(255,255,255,.6)", lineHeight:1.8 }}>
+                            {inv.issued && <div>Issued: {inv.issued}</div>}
+                            {inv.due && <div style={{ fontWeight:600, color:isOverdue?"#ffb3a0":"rgba(255,255,255,.9)" }}>Due: {inv.due}</div>}
+                            {f.terms && <div>Terms: {f.terms}</div>}
+                          </div>
+                        </div>
                       </div>
-                      {inv.items.map((item,i) => (
-                        <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"10px 0", borderTop:`1px solid ${C.border}` }}>
-                          <span style={{ fontSize:14, color:C.ink }}>{item.desc}</span>
-                          <span style={{ fontSize:14, fontWeight:600, color:C.ink }}>${(item.qty*item.rate).toLocaleString()}</span>
+
+                      {/* Invoice body */}
+                      <div style={{ padding:"20px 28px" }}>
+                        {/* Bill To (if we have form data) */}
+                        {(inv.client || f.clientName) && (
+                          <div style={{ marginBottom:16, padding:"12px 14px", background:"#f9f9f7", borderRadius:10, border:`1px solid ${C.border}` }}>
+                            <p style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:1, margin:"0 0 6px" }}>Bill To</p>
+                            <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{inv.client || f.clientName}</p>
+                            {f.clientCompany && <p style={{ fontSize:12, color:C.muted, margin:"2px 0 0" }}>{f.clientCompany}</p>}
+                            {f.clientEmail && <p style={{ fontSize:12, color:C.muted, margin:"2px 0 0" }}>{f.clientEmail}</p>}
+                          </div>
+                        )}
+
+                        {/* Line items */}
+                        <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:12 }}>
+                          <thead>
+                            <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                              {["Description","Qty","Rate","Amount"].map((h,i) => (
+                                <th key={h} style={{ textAlign:i===0?"left":"right", fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:.5, paddingBottom:8, paddingLeft:i>0?10:0 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inv.items.map((it,i) => {
+                              const amt = (+(it.qty||1)) * (+(it.rate||0));
+                              return (
+                                <tr key={i} style={{ borderBottom:`1px solid ${C.border}` }}>
+                                  <td style={{ padding:"10px 0", fontSize:13, color:C.ink }}>{it.desc||"Service"}</td>
+                                  <td style={{ padding:"10px 0 10px 10px", fontSize:13, color:C.muted, textAlign:"right" }}>{it.qty}</td>
+                                  <td style={{ padding:"10px 0 10px 10px", fontSize:13, color:C.muted, textAlign:"right" }}>${(+(it.rate||0)).toLocaleString(undefined,{minimumFractionDigits:2})}</td>
+                                  <td style={{ padding:"10px 0 10px 10px", fontSize:13, color:C.ink, fontWeight:500, textAlign:"right" }}>${amt.toLocaleString(undefined,{minimumFractionDigits:2})}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+
+                        {/* Totals breakdown */}
+                        <div style={{ display:"flex", justifyContent:"flex-end" }}>
+                          <div style={{ minWidth:220 }}>
+                            {hasBreakdown && (
+                              <>
+                                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 }}>
+                                  <span style={{ color:C.muted }}>Subtotal</span>
+                                  <span style={{ color:C.ink }}>${subtotal.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                                </div>
+                                {inv.discAmt > 0 && (
+                                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 }}>
+                                    <span style={{ color:C.muted }}>Discount</span>
+                                    <span style={{ color:C.ink }}>−${inv.discAmt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                                  </div>
+                                )}
+                                {inv.taxAmt > 0 && (
+                                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 }}>
+                                    <span style={{ color:C.muted }}>Tax ({f.taxState} {f.taxRate}%)</span>
+                                    <span style={{ color:C.ink }}>${inv.taxAmt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                                  </div>
+                                )}
+                                {inv.depositAmt > 0 && (
+                                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6 }}>
+                                    <span style={{ color:C.muted }}>Deposit Received</span>
+                                    <span style={{ color:C.ink }}>−${inv.depositAmt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            <div style={{ background:isPaid?"#4a7a57":isOverdue?"#b05c3a":"#1a1a1a", borderRadius:10, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
+                              <span style={{ fontWeight:600, fontSize:13, color:"#fff" }}>{isPaid ? "Paid in Full" : "Balance Due"}</span>
+                              <span style={{ fontSize:20, fontWeight:700, color:"#fff", fontFamily:"'Cormorant Garamond',serif" }}>${balanceDue.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                            </div>
+                          </div>
                         </div>
-                      ))}
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"12px 0 0", borderTop:`2px solid ${C.border}`, marginTop:4 }}>
-                        <span style={{ fontSize:14, fontWeight:600, color:C.ink }}>Total</span>
-                        <span style={{ fontSize:18, fontWeight:700, color:C.ink, fontFamily:"'Cormorant Garamond',serif" }}>${total.toLocaleString()}</span>
+
+                        {/* Memo */}
+                        {inv.memo && (
+                          <div style={{ marginTop:14, padding:"12px 14px", background:"#f9f9f7", borderRadius:10, border:`1px solid ${C.border}` }}>
+                            <p style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:.5, margin:"0 0 5px" }}>Notes from the Studio</p>
+                            <p style={{ fontSize:13, color:C.ink, margin:0, lineHeight:1.6 }}>{inv.memo}</p>
+                          </div>
+                        )}
+
+                        {/* Pay button */}
+                        {!isPaid && (
+                          <button onClick={() => openPayModal(inv)} style={{ marginTop:18, width:"100%", padding:"14px 0", background:isOverdue?"#b05c3a":accent, color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:600, cursor:"pointer" }}>
+                            {isOverdue ? "⚠ Pay Now — Overdue" : `Pay Balance · $${balanceDue.toLocaleString(undefined,{minimumFractionDigits:2})}`}
+                          </button>
+                        )}
+                        {isPaid && (
+                          <div style={{ marginTop:14, display:"flex", alignItems:"center", gap:7, color:"#4a7a57" }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span style={{ fontSize:13, fontWeight:500 }}>Paid in full — thank you!</span>
+                          </div>
+                        )}
                       </div>
-                      {!isPaid && !paidInvoices.includes(inv.id) && (
-                        <button onClick={() => openPayModal(inv)} style={{ marginTop:18, width:"100%", padding:"13px 0", background:isOverdue?"#b05c3a":accent, color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:600, cursor:"pointer" }}>
-                          {isOverdue ? "Pay Now — Overdue" : "Pay Balance"}
-                        </button>
-                      )}
-                      {paidInvoices.includes(inv.id) && (
-                        <div style={{ marginTop:14, display:"flex", alignItems:"center", gap:7, color:C.green }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                          <span style={{ fontSize:13, fontWeight:500 }}>Payment received — thank you!</span>
-                        </div>
-                      )}
-                      {isPaid && (
-                        <div style={{ marginTop:14, display:"flex", alignItems:"center", gap:7, color:C.green }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                          <span style={{ fontSize:13, fontWeight:500 }}>Paid in full — thank you!</span>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -24205,7 +24344,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
@@ -24221,7 +24360,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos}/>,
+    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit}/>,
   };
 
