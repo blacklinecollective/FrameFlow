@@ -4193,26 +4193,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [activeChat, setActiveChat] = useState(null); // thread id within group threads
   const [showAddContact, setShowAddContact] = useState(false);
   const [projContacts, setProjContacts] = useState({});
-  const [projChecklists, setProjChecklists] = useState({
-    1: [
-      { id:1, text:"Send client questionnaire",         checked:true,  cat:"admin"   },
-      { id:2, text:"Confirm venue & arrival time",      checked:true,  cat:"prep"    },
-      { id:3, text:"Review client style board",         checked:true,  cat:"prep"    },
-      { id:4, text:"Ceremony coverage",                 checked:false, cat:"shoot"   },
-      { id:5, text:"Reception & portraits",             checked:false, cat:"shoot"   },
-      { id:6, text:"Cull & edit final selects",         checked:false, cat:"editing" },
-      { id:7, text:"Deliver gallery to client",         checked:false, cat:"deliver" },
-    ],
-    4: [
-      { id:1, text:"Pre-production discovery call",     checked:true,  cat:"admin"   },
-      { id:2, text:"Scout location — Atlas Coffee",     checked:true,  cat:"prep"    },
-      { id:3, text:"Film shoot day",                    checked:false, cat:"shoot"   },
-      { id:4, text:"Edit hero cut (60s)",               checked:false, cat:"editing" },
-      { id:5, text:"Edit social reel (30s)",            checked:false, cat:"editing" },
-      { id:6, text:"Client review & revisions",         checked:false, cat:"review"  },
-      { id:7, text:"Final delivery",                    checked:false, cat:"deliver" },
-    ],
-  });
+  const [projChecklists, setProjChecklists] = useState({});
   const [projTimeLogs, setProjTimeLogs] = useState({
     1: [
       { id:1, date:"Apr 2, 2026",  hours:1.5, cat:"admin",   desc:"Client consult + contract prep" },
@@ -4296,6 +4277,39 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
   const projBase = projects.find(p => p.id === sel);
   const proj = projBase ? { ...projBase, ...(projOverrides[projBase.id] || {}) } : null;
+
+  // Helper: update a project field both locally (projOverrides) and persistently (appProjects)
+  const updateProjField = (projId, changes) => {
+    setProjOverrides(prev => ({ ...prev, [projId]: { ...prev[projId], ...changes } }));
+    if (setAppProjects) {
+      setAppProjects(prev => prev.map(p => p.id === projId ? { ...p, ...changes } : p));
+    }
+  };
+
+  // Sync checklist from persisted project data when switching projects
+  useEffect(() => {
+    if (!sel) return;
+    const base = projects.find(p => p.id === sel);
+    const override = projOverrides[sel] || {};
+    const merged = { ...base, ...override };
+    if (merged.checklist && merged.checklist.length > 0) {
+      setProjChecklists(prev => {
+        // Only populate if local state is empty for this project (don't overwrite mid-session edits)
+        if ((prev[sel] || []).length > 0) return prev;
+        return { ...prev, [sel]: merged.checklist };
+      });
+    }
+  }, [sel]);
+
+  // Wrapper: update checklist locally + persist to project
+  const updateChecklist = (projId, updater) => {
+    setProjChecklists(prev => {
+      const current = prev[projId] || [];
+      const next = typeof updater === "function" ? updater(current) : updater;
+      updateProjField(projId, { checklist: next });
+      return { ...prev, [projId]: next };
+    });
+  };
 
   const selectProject = (id) => {
     setSel(id);
@@ -4637,22 +4651,45 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                 <div style={{ marginTop:20 }}><ProgressBar value={proj.paid} max={proj.budget}/></div>
               </Card>
               <Card style={{ padding:22 }}>
-                <h3 style={{ fontSize:14, fontWeight:600, color:C.ink, marginBottom:16 }}>Workflow</h3>
-                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  {TASK_LABELS.map((t,i) => {
-                    const tasks = proj.tasks || [];
-                    return (
-                    <div key={t} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", background: tasks[i] ? "#edf0ec" : C.cream, borderRadius:10, border:`1px solid ${tasks[i]?"#c3ccc0":C.border}` }}>
-                      <div style={{ width:22, height:22, borderRadius:"50%", background: tasks[i] ? C.green : "#fff", border:`2px solid ${tasks[i] ? C.green : C.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                        {tasks[i] && <Ic d={P.check} size={11} style={{ color:"#fff" }}/>}
-                      </div>
-                      <span style={{ fontSize:13, color: tasks[i] ? C.muted : C.ink, textDecoration: tasks[i] ? "line-through" : "none" }}>{t}</span>
-                      {i === tasks.filter(Boolean).length && (
-                        <span style={{ marginLeft:"auto", fontSize:11, background:"#f4ede3", color:"#9e7850", border:"1px solid #f4d98a", padding:"2px 8px", borderRadius:99 }}>Current</span>
-                      )}
+                {(() => {
+                  const ovItems = projChecklists[proj.id] || [];
+                  const ovDone  = ovItems.filter(c=>c.checked).length;
+                  return (<>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+                      <h3 style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>Project Checklist</h3>
+                      <span style={{ fontSize:11, color:C.muted }}>{ovDone}/{ovItems.length} done</span>
                     </div>
-                  ); })}
-                </div>
+                    {ovItems.length === 0 ? (
+                      <div style={{ textAlign:"center", padding:"20px 0" }}>
+                        <p style={{ fontSize:13, color:C.muted, fontStyle:"italic", marginBottom:10 }}>No checklist items yet</p>
+                        <button onClick={() => setTab("progress")} style={{ fontSize:12, color:C.accent, background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 14px", cursor:"pointer" }}>Add items in Progress tab →</button>
+                      </div>
+                    ) : (
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {ovItems.map((item, i) => {
+                          const isCurrent = !item.checked && ovItems.slice(0,i).every(c=>c.checked);
+                          return (
+                          <div key={item.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 12px", borderRadius:10, background:item.checked?"#f4faf4":isCurrent?"#fdf8ee":C.cream, border:`1px solid ${item.checked?"#c3d9c3":isCurrent?"#e8c98a":C.border}` }}>
+                            <button onClick={() => toggleCheck(item.id)}
+                              style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${item.checked?C.green:C.border}`, background:item.checked?C.green:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, cursor:"pointer", marginTop:1 }}>
+                              {item.checked && <Ic d={P.check} size={10} style={{ color:"#fff" }}/>}
+                            </button>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <span style={{ fontSize:13, color:item.checked?C.muted:C.ink, textDecoration:item.checked?"line-through":"none", display:"block" }}>{item.text}</span>
+                              {item.due && (
+                                <span style={{ fontSize:11, color:"#7a8c9e", display:"flex", alignItems:"center", gap:4, marginTop:3 }}>
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                  {new Date(item.due+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                                </span>
+                              )}
+                            </div>
+                            {isCurrent && <span style={{ fontSize:10, background:"#f4ede3", color:"#9e7850", border:"1px solid #f4d98a", padding:"2px 8px", borderRadius:99, flexShrink:0, marginTop:2 }}>Current</span>}
+                          </div>
+                        ); })}
+                      </div>
+                    )}
+                  </>);
+                })()}
               </Card>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -5088,9 +5125,15 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           const CAT_LABELS = { admin:"Admin", prep:"Prep", shoot:"Shoot", editing:"Editing", review:"Review", deliver:"Delivery" };
           const addChecklistItem = () => {
             if (!ckInput.trim()) return;
-            const newItem = { id: Date.now(), text:ckInput.trim(), checked:false, cat:ckCat };
-            setProjChecklists(prev => ({ ...prev, [proj.id]: [...(prev[proj.id]||[]), newItem] }));
+            const newItem = { id: Date.now(), text:ckInput.trim(), checked:false, cat:ckCat, due:"" };
+            updateChecklist(proj.id, prev => [...prev, newItem]);
             setCkInput("");
+          };
+          const setChecklistItemDate = (id, due) => {
+            updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, due} : c));
+          };
+          const updateChecklistItemText = (id, text) => {
+            updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, text} : c));
           };
           const toggleCheck = (id) => {
             const current = projChecklists[proj.id] || [];
@@ -5098,7 +5141,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
             if (!item) return;
             const isChecking = !item.checked; // true = marking complete
             const updated = current.map(c => c.id === id ? {...c, checked:!c.checked} : c);
-            setProjChecklists(prev => ({ ...prev, [proj.id]: updated }));
+            updateChecklist(proj.id, () => updated);
 
             if (isChecking) {
               const allDone = updated.every(c => c.checked);
@@ -5135,9 +5178,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
               }
             }
           };
-          const removeCheck = (id) => setProjChecklists(prev => ({
-            ...prev, [proj.id]: (prev[proj.id]||[]).filter(c => c.id!==id)
-          }));
+          const removeCheck = (id) => updateChecklist(proj.id, prev => prev.filter(c => c.id !== id));
           const addTimeLog = () => {
             if (!tlHours || isNaN(+tlHours)) return;
             const newLog = { id:Date.now(), date:tlDate||new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}), hours:+tlHours, cat:tlCat, desc:tlDesc };
@@ -5174,14 +5215,34 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                       <p style={{ fontSize:13, color:C.muted, textAlign:"center", padding:"16px 0", fontStyle:"italic" }}>No items yet — add your first milestone below</p>
                     )}
                     {checklist.map(item => (
-                      <div key={item.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:item.checked?"#f4faf4":C.cream, border:`1px solid ${item.checked?"#c3d9c3":C.border}`, transition:"all .2s" }}>
-                        <button onClick={() => toggleCheck(item.id)}
-                          style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${item.checked?C.green:C.border}`, background:item.checked?C.green:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, cursor:"pointer" }}>
-                          {item.checked && <Ic d={P.check} size={10} style={{ color:"#fff" }}/>}
-                        </button>
-                        <span style={{ flex:1, fontSize:13, color:item.checked?C.muted:C.ink, textDecoration:item.checked?"line-through":"none", lineHeight:1.4 }}>{item.text}</span>
-                        <span style={{ fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:99, background:CAT_COLORS[item.cat]+"20", color:CAT_COLORS[item.cat], flexShrink:0 }}>{CAT_LABELS[item.cat]||item.cat}</span>
-                        <button onClick={() => removeCheck(item.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:15, lineHeight:1, padding:"0 2px", opacity:.5 }}>×</button>
+                      <div key={item.id} style={{ borderRadius:10, border:`1px solid ${item.checked?"#c3d9c3":C.border}`, background:item.checked?"#f4faf4":C.cream, overflow:"hidden", transition:"all .2s" }}>
+                        {/* Main row */}
+                        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px" }}>
+                          <button onClick={() => toggleCheck(item.id)}
+                            style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${item.checked?C.green:C.border}`, background:item.checked?C.green:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, cursor:"pointer" }}>
+                            {item.checked && <Ic d={P.check} size={10} style={{ color:"#fff" }}/>}
+                          </button>
+                          <input
+                            value={item.text}
+                            onChange={e => updateChecklistItemText(item.id, e.target.value)}
+                            style={{ flex:1, fontSize:13, color:item.checked?C.muted:C.ink, textDecoration:item.checked?"line-through":"none", background:"transparent", border:"none", outline:"none", lineHeight:1.4, padding:0 }}
+                          />
+                          <span style={{ fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:99, background:CAT_COLORS[item.cat]+"20", color:CAT_COLORS[item.cat], flexShrink:0 }}>{CAT_LABELS[item.cat]||item.cat}</span>
+                          <button onClick={() => removeCheck(item.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:15, lineHeight:1, padding:"0 2px", opacity:.5 }}>×</button>
+                        </div>
+                        {/* Deadline row */}
+                        <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px 8px 44px", borderTop:`1px solid ${item.checked?"#c3d9c3":C.border}` }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          <input
+                            type="date"
+                            value={item.due || ""}
+                            onChange={e => setChecklistItemDate(item.id, e.target.value)}
+                            style={{ fontSize:11, color:item.due?C.muted:"#bbb", border:"none", outline:"none", background:"transparent", cursor:"pointer", padding:0 }}
+                          />
+                          {item.due && (
+                            <button onClick={() => setChecklistItemDate(item.id, "")} style={{ fontSize:10, color:C.muted, background:"none", border:"none", cursor:"pointer", padding:0, opacity:.5 }}>✕</button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -22966,15 +23027,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     }, 1800);
   };
 
-  const checklist = [
-    { id:1, text:"Send client questionnaire",      checked:true,  cat:"admin"   },
-    { id:2, text:"Confirm venue & arrival time",   checked:true,  cat:"prep"    },
-    { id:3, text:"Review client style board",      checked:true,  cat:"prep"    },
-    { id:4, text:"Ceremony coverage",              checked:false, cat:"shoot"   },
-    { id:5, text:"Reception & portraits",          checked:false, cat:"shoot"   },
-    { id:6, text:"Cull & edit final selects",      checked:false, cat:"editing" },
-    { id:7, text:"Deliver gallery to client",      checked:false, cat:"deliver" },
-  ];
+  const checklist = proj.checklist || [];
   const done = checklist.filter(c => c.checked).length;
   const currentStep = checklist.find(c => !c.checked);
   const TASK_LABELS_PORTAL = ["Consultation","Shot List","Shoot Day","Culling","Editing","Delivery"];
@@ -22993,10 +23046,10 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     { id:"home",      label:"Home",      icon:P.home   },
     { id:"gallery",   label:"Gallery",   icon:P.image  },
     { id:"progress",  label:"Progress",  icon:P.check  },
+    { id:"messages",  label:"Messages",  icon:P.msg    },
     { id:"invoice",   label:"Invoice",   icon:P.file   },
     { id:"contract",  label:"Contract",  icon:P.sign   },
     { id:"forms",     label:"Forms",     icon:P.form   },
-    { id:"messages",  label:"Messages",  icon:P.msg    },
     { id:"book",      label:"Book",      icon:P.cal    },
   ];
 
@@ -23078,26 +23131,35 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
               {/* Status card */}
               <div style={{ background:"#fff", borderRadius:14, padding:24, border:`1px solid ${C.border}` }}>
-                <p style={{ fontSize:11, textTransform:"uppercase", letterSpacing:.5, color:C.muted, marginBottom:16, fontWeight:600 }}>Project Status</p>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+                  <p style={{ fontSize:11, textTransform:"uppercase", letterSpacing:.5, color:C.muted, margin:0, fontWeight:600 }}>Project Checklist</p>
+                  <span style={{ fontSize:11, color:C.muted }}>{done}/{checklist.length}</span>
+                </div>
+                {checklist.length === 0 ? (
+                  <p style={{ fontSize:12, color:C.muted, fontStyle:"italic", textAlign:"center", padding:"12px 0" }}>Your photographer will add checklist items as work begins.</p>
+                ) : (
                 <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  {TASK_LABELS_PORTAL.map((label, i) => {
-                    const done_t = proj.tasks && proj.tasks[i];
-                    const isCurrent = proj.tasks && !proj.tasks[i] && proj.tasks.slice(0,i).every(Boolean);
+                  {checklist.map((item, i) => {
+                    const isCurrent = !item.checked && checklist.slice(0,i).every(c=>c.checked);
                     return (
-                      <div key={label} style={{ display:"flex", alignItems:"center", gap:10 }}>
-                        <div style={{ width:20, height:20, borderRadius:"50%", flexShrink:0,
-                          background:done_t?accent:isCurrent?"#fff":"#f5f4f2",
-                          border:`2px solid ${done_t?accent:isCurrent?accent:C.border}`,
+                      <div key={item.id} style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                        <div style={{ width:20, height:20, borderRadius:"50%", flexShrink:0, marginTop:1,
+                          background:item.checked?accent:isCurrent?"#fff":"#f5f4f2",
+                          border:`2px solid ${item.checked?accent:isCurrent?accent:C.border}`,
                           display:"flex", alignItems:"center", justifyContent:"center" }}>
-                          {done_t && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                          {item.checked && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
                           {isCurrent && <div style={{ width:6, height:6, borderRadius:"50%", background:accent }}/>}
                         </div>
-                        <span style={{ fontSize:13, color:done_t?C.muted:isCurrent?C.ink:C.muted, fontWeight:isCurrent?600:400, textDecoration:done_t?"line-through":"none" }}>{label}</span>
-                        {isCurrent && <span style={{ marginLeft:"auto", fontSize:10, fontWeight:600, color:accent, background:"#fdf3e6", border:"1px solid #f4d98a", borderRadius:99, padding:"2px 8px" }}>In Progress</span>}
+                        <div style={{ flex:1 }}>
+                          <span style={{ fontSize:13, color:item.checked?C.muted:isCurrent?C.ink:C.muted, fontWeight:isCurrent?600:400, textDecoration:item.checked?"line-through":"none", display:"block" }}>{item.text}</span>
+                          {item.due && <span style={{ fontSize:10, color:item.checked?C.border:"#7a8c9e" }}>{new Date(item.due+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+                        </div>
+                        {isCurrent && <span style={{ fontSize:10, fontWeight:600, color:accent, background:"#fdf3e6", border:"1px solid #f4d98a", borderRadius:99, padding:"2px 8px", flexShrink:0, marginTop:1 }}>Now</span>}
                       </div>
                     );
                   })}
                 </div>
+                )}
               </div>
 
               <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
@@ -23141,8 +23203,8 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
               {[
                 { label:"View Gallery",    icon:P.image,  t:"gallery",  col:accent     },
                 { label:"Check Progress",  icon:P.check,  t:"progress", col:"#5c7a68"  },
-                { label:"View Invoice",    icon:P.file,   t:"invoice",  col:"#7a8c9e"  },
                 { label:"Send Message",    icon:P.msg,    t:"messages", col:"#9b7fe8"  },
+                { label:"View Invoice",    icon:P.file,   t:"invoice",  col:"#7a8c9e"  },
               ].map(({label,icon,t,col}) => (
                 <button key={t} onClick={() => setTab(t)}
                   style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:9, padding:"20px 12px", borderRadius:14, background:"#fff", border:`1px solid ${C.border}`, cursor:"pointer", transition:"all .15s" }}
@@ -23181,37 +23243,56 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
             </div>
 
             {/* Big progress indicator */}
-            <div style={{ background:"#fff", borderRadius:16, padding:28, border:`1px solid ${C.border}`, marginBottom:16 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                <span style={{ fontSize:14, fontWeight:600, color:C.ink }}>{done} of {checklist.length} steps complete</span>
-                <span style={{ fontSize:22, fontWeight:700, color:accent, fontFamily:"'Cormorant Garamond',serif" }}>{Math.round((done/checklist.length)*100)}%</span>
+            {checklist.length > 0 && (
+              <div style={{ background:"#fff", borderRadius:16, padding:28, border:`1px solid ${C.border}`, marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <span style={{ fontSize:14, fontWeight:600, color:C.ink }}>{done} of {checklist.length} steps complete</span>
+                  <span style={{ fontSize:22, fontWeight:700, color:accent, fontFamily:"'Cormorant Garamond',serif" }}>{checklist.length ? Math.round((done/checklist.length)*100) : 0}%</span>
+                </div>
+                <div style={{ height:8, borderRadius:4, background:"#f0eeeb", overflow:"hidden" }}>
+                  <div style={{ height:"100%", width:`${checklist.length ? (done/checklist.length)*100 : 0}%`, background:accent, borderRadius:4, transition:"width .5s" }}/>
+                </div>
               </div>
-              <div style={{ height:8, borderRadius:4, background:"#f0eeeb", overflow:"hidden" }}>
-                <div style={{ height:"100%", width:`${(done/checklist.length)*100}%`, background:accent, borderRadius:4, transition:"width .5s" }}/>
-              </div>
-            </div>
+            )}
 
             {/* Steps */}
             <div style={{ background:"#fff", borderRadius:16, padding:28, border:`1px solid ${C.border}` }}>
-              <p style={{ fontSize:11, textTransform:"uppercase", letterSpacing:.5, color:C.muted, marginBottom:20, fontWeight:600 }}>Checklist</p>
+              <p style={{ fontSize:11, textTransform:"uppercase", letterSpacing:.5, color:C.muted, marginBottom:20, fontWeight:600 }}>Project Checklist</p>
+              {checklist.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"24px 0" }}>
+                  <p style={{ fontSize:14, color:C.muted }}>Your photographer hasn't added any checklist items yet.</p>
+                  <p style={{ fontSize:12, color:C.muted, marginTop:6 }}>Check back soon — they'll be visible here as the project progresses.</p>
+                </div>
+              ) : (
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                {checklist.map((item, i) => (
-                  <div key={item.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 16px", borderRadius:12, background:item.checked?"#f8faf7":C.cream, border:`1px solid ${item.checked?"#d0dccf":C.border}` }}>
-                    <div style={{ width:26, height:26, borderRadius:"50%", flexShrink:0,
+                {checklist.map((item, i) => {
+                  const isCurrent = !item.checked && checklist.slice(0,i).every(c=>c.checked);
+                  return (
+                  <div key={item.id} style={{ display:"flex", alignItems:"flex-start", gap:14, padding:"12px 16px", borderRadius:12, background:item.checked?"#f8faf7":isCurrent?"#fdf8ee":C.cream, border:`1px solid ${item.checked?"#d0dccf":isCurrent?"#e8c98a":C.border}` }}>
+                    <div style={{ width:26, height:26, borderRadius:"50%", flexShrink:0, marginTop:1,
                       background:item.checked?accent:"#fff",
-                      border:`2px solid ${item.checked?accent:C.border}`,
+                      border:`2px solid ${item.checked?accent:isCurrent?accent:C.border}`,
                       display:"flex", alignItems:"center", justifyContent:"center" }}>
                       {item.checked
                         ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                        : <span style={{ fontSize:10, color:C.muted, fontWeight:600 }}>{i+1}</span>}
+                        : <span style={{ fontSize:10, color:isCurrent?accent:C.muted, fontWeight:600 }}>{i+1}</span>}
                     </div>
-                    <span style={{ fontSize:14, color:item.checked?C.muted:C.ink, textDecoration:item.checked?"line-through":"none", flex:1 }}>{item.text}</span>
-                    {!item.checked && checklist.slice(0,i).every(c=>c.checked) && (
-                      <span style={{ fontSize:10, fontWeight:700, color:accent, background:"#fdf3e6", border:"1px solid #f4d98a", borderRadius:99, padding:"3px 10px", flexShrink:0 }}>Now</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <span style={{ fontSize:14, color:item.checked?C.muted:C.ink, textDecoration:item.checked?"line-through":"none", display:"block" }}>{item.text}</span>
+                      {item.due && (
+                        <span style={{ fontSize:11, color:item.checked?C.muted:"#7a8c9e", display:"flex", alignItems:"center", gap:4, marginTop:3 }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          {new Date(item.due+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                        </span>
+                      )}
+                    </div>
+                    {isCurrent && (
+                      <span style={{ fontSize:10, fontWeight:700, color:accent, background:"#fdf3e6", border:"1px solid #f4d98a", borderRadius:99, padding:"3px 10px", flexShrink:0, marginTop:2 }}>Now</span>
                     )}
                   </div>
-                ))}
+                ); })}
               </div>
+              )}
             </div>
 
             <div style={{ marginTop:16, padding:"14px 18px", borderRadius:12, background:"#f0f4f9", border:"1px solid #d0dcea", display:"flex", gap:10 }}>
