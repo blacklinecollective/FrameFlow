@@ -12,8 +12,18 @@ function debounce(fn, ms) {
 }
 const _saveState = async (userId, patch) => {
   if (!userId) return;
+  // Strip any base64 data-URLs from gallery_photos before saving to DB
+  // (base64 blobs are huge and break the Supabase row size limit)
+  let cleanPatch = patch;
+  if (patch.gallery_photos) {
+    const cleanPhotos = {};
+    for (const [projId, arr] of Object.entries(patch.gallery_photos)) {
+      cleanPhotos[projId] = (arr || []).filter(ph => ph.url && !ph.url.startsWith("data:") && !ph.uploading);
+    }
+    cleanPatch = { ...patch, gallery_photos: cleanPhotos };
+  }
   await supabase.from("app_state").upsert(
-    { user_id: userId, ...patch, updated_at: new Date().toISOString() },
+    { user_id: userId, ...cleanPatch, updated_at: new Date().toISOString() },
     { onConflict: "user_id" }
   );
 };
@@ -3355,17 +3365,43 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     if (!files || files.length === 0) return;
     setUploading(true);
     const fileArr = Array.from(files);
-    let loaded = 0;
-    const newPhotos = [];
+    // Insert placeholder entries so photos appear immediately while uploading
+    const placeholders = fileArr.map((file, idx) => ({
+      url: null,          // will be replaced by storage URL
+      name: file.name,
+      uploading: true,
+      _tmpId: `tmp_${Date.now()}_${idx}`,
+    }));
+    setPhotos(p => [...p, ...placeholders]);
+
+    let done = 0;
     fileArr.forEach((file, idx) => {
+      const tmpId = placeholders[idx]._tmpId;
+      // Local base64 preview while upload runs
       const reader = new FileReader();
       reader.onload = (ev) => {
-        newPhotos[idx] = { url: ev.target.result, name: file.name };
-        loaded++;
-        if (loaded === fileArr.length) {
-          setPhotos(p => [...p, ...newPhotos.filter(Boolean)]);
-          setUploading(false);
-        }
+        const localUrl = ev.target.result;
+        // Show local preview immediately
+        setPhotos(prev => prev.map(ph => ph._tmpId === tmpId ? { ...ph, url: localUrl } : ph));
+        // Upload to Supabase Storage
+        const ext = file.name.split(".").pop().toLowerCase();
+        const path = `gallery/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        supabase.storage.from("Media").upload(path, file, { upsert: true }).then(({ data, error }) => {
+          if (!error && data) {
+            const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+            // Replace local preview with permanent public URL
+            setPhotos(prev => prev.map(ph =>
+              ph._tmpId === tmpId ? { url: publicUrl, name: file.name } : ph
+            ));
+          } else {
+            // Upload failed — keep local preview but remove uploading flag
+            setPhotos(prev => prev.map(ph =>
+              ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
+            ));
+          }
+          done++;
+          if (done === fileArr.length) setUploading(false);
+        });
       };
       reader.readAsDataURL(file);
     });
