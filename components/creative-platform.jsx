@@ -2329,6 +2329,52 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
           {tab === "settings" && (
             <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
 
+              {/* Gallery Appearance */}
+              <div style={{ background:C.cream, borderRadius:12, padding:16, border:`1px solid ${C.border}` }}>
+                <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:"0 0 12px" }}>Gallery Appearance</p>
+                {/* Title */}
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:11, color:C.muted, display:"block", marginBottom:5 }}>Gallery Title (shown to client)</label>
+                  <input value={gd.galleryTitle ?? proj.name + " — Your Gallery"} onChange={e=>update("galleryTitle",e.target.value)}
+                    style={{ ...inputS }} placeholder={proj.name + " — Your Gallery"}/>
+                </div>
+                {/* Layout style */}
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:11, color:C.muted, display:"block", marginBottom:5 }}>Gallery Layout</label>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                    {[["grid","Grid"],["masonry","Masonry"],["slideshow","Slideshow"],["magazine","Magazine"]].map(([val,lbl]) => (
+                      <div key={val} onClick={() => update("galleryStyle", val)}
+                        style={{ padding:"8px 12px", borderRadius:9, border:`2px solid ${(gd.galleryStyle||"masonry")===val?C.ink:C.border}`, background:(gd.galleryStyle||"masonry")===val?C.warm:"#fff", cursor:"pointer", textAlign:"center", transition:"all .12s" }}>
+                        <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:0 }}>{lbl}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Column size */}
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:11, color:C.muted, display:"block", marginBottom:5 }}>Photo Size</label>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {[["S","Small"],["M","Medium"],["L","Large"]].map(([val,lbl]) => (
+                      <div key={val} onClick={() => update("colSize", val)}
+                        style={{ flex:1, padding:"7px 0", borderRadius:9, border:`2px solid ${(gd.colSize||"M")===val?C.ink:C.border}`, background:(gd.colSize||"M")===val?C.warm:"#fff", cursor:"pointer", textAlign:"center", transition:"all .12s" }}>
+                        <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:0 }}>{lbl}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Dark mode */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <div>
+                    <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:0 }}>Dark Theme</p>
+                    <p style={{ fontSize:11, color:C.muted, margin:"1px 0 0" }}>Dark background for a dramatic editorial look</p>
+                  </div>
+                  <div onClick={() => update("darkMode", !gd.darkMode)}
+                    style={{ width:38, height:22, borderRadius:99, background:gd.darkMode?C.ink:C.border, position:"relative", cursor:"pointer", transition:"background .15s", flexShrink:0 }}>
+                    <div style={{ position:"absolute", top:3, left:gd.darkMode?17:3, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left .15s" }}/>
+                  </div>
+                </div>
+              </div>
+
               {/* Gallery link */}
               <div>
                 <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.5, color:C.muted, margin:"0 0 8px" }}>Gallery Link</p>
@@ -2662,8 +2708,54 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
   const canSubmit= selMode === "required" ? selCount >= selMin : selCount > 0;
   const displayPhotos = showFavOnly ? photos.map((p,i)=>({bg:p,i})).filter(({i})=>isFav(i)) : photos.map((p,i)=>({bg:p,i}));
 
+  // Layout / display settings from delivery
+  const galleryStyle = gd.galleryStyle || "masonry";
+  const colSize      = gd.colSize      || "M";
+  const cols         = { S:5, M:3, L:2 }[colSize] || 3;
+  const isDark       = gd.darkMode     || false;
+  const galleryTitle = gd.galleryTitle || proj?.name || "";
+  const bg           = isDark ? "#0e0e0e" : "#fafaf8";
+  const textColor    = isDark ? "#fff" : "#1a1a1a";
+  const mutedColor   = isDark ? "rgba(255,255,255,.45)" : "#888";
+  const borderColor  = isDark ? "rgba(255,255,255,.08)" : "#e8e5e0";
+
   const lbPrev = () => setLightbox(i => (i-1+photos.length)%photos.length);
   const lbNext = () => setLightbox(i => (i+1)%photos.length);
+
+  // Reusable photo tile renderer
+  const PhotoTile = ({ item, extraStyle = {} }) => {
+    const { bg: photo, i } = item;
+    const fav     = isFav(i);
+    const flagged = isFlagged(i);
+    const src     = imgSrc(photo);
+    return (
+      <div style={{ position:"relative", overflow:"hidden", cursor:"pointer", ...extraStyle }}
+        onClick={() => setLightbox(i)}
+        onMouseEnter={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="1"; }}
+        onMouseLeave={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="0"; }}>
+        {src
+          ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+          : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+        }
+        <div className="cgv-overlay" style={{ position:"absolute", inset:0, opacity:0, transition:"opacity .15s", background:"rgba(0,0,0,.25)", pointerEvents:"none" }}>
+          <div style={{ position:"absolute", top:8, right:8, display:"flex", gap:5 }}>
+            <button onClick={ev => { ev.stopPropagation(); toggleFav(i); }}
+              style={{ width:32, height:32, borderRadius:8, background:"rgba(0,0,0,.55)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", pointerEvents:"auto" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill={fav?"#e05a6a":"none"} stroke={fav?"#e05a6a":"#fff"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+            </button>
+            <button onClick={ev => { ev.stopPropagation(); setFlagModal({ photoIndex:i, note: flags.find(f=>f.photoIndex===i)?.note || "" }); }}
+              style={{ width:32, height:32, borderRadius:8, background:"rgba(0,0,0,.55)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", pointerEvents:"auto" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill={flagged?"#f0a040":"none"} stroke={flagged?"#f0a040":"#fff"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+            </button>
+          </div>
+        </div>
+        <div style={{ position:"absolute", bottom:6, left:6, display:"flex", gap:4 }}>
+          {fav && <div style={{ width:20, height:20, borderRadius:6, background:"rgba(224,90,106,.9)", display:"flex", alignItems:"center", justifyContent:"center" }}><svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="#fff" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>}
+          {flagged && <div style={{ width:20, height:20, borderRadius:6, background:"rgba(240,160,64,.9)", display:"flex", alignItems:"center", justifyContent:"center" }}><svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="#fff" strokeWidth="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></div>}
+        </div>
+      </div>
+    );
+  };
 
   if (!pinUnlocked) return (
     <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:480, background:"#0e0e0e", borderRadius:16, padding:40 }}>
@@ -2709,12 +2801,12 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
   );
 
   return (
-    <div style={{ background:"#0e0e0e", borderRadius:16, overflow:"hidden" }}>
+    <div style={{ background:bg, borderRadius:16, overflow:"hidden" }}>
       {/* Gallery hero header */}
-      <div style={{ padding:"40px 36px 32px", textAlign:"center", borderBottom:"1px solid rgba(255,255,255,.08)" }}>
-        <p style={{ fontSize:11, color:"rgba(255,255,255,.35)", textTransform:"uppercase", letterSpacing:2.5, margin:"0 0 10px", fontWeight:500 }}>{proj?.type} · {gd.publishedAt}</p>
-        <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:38, fontWeight:500, color:"#fff", margin:"0 0 12px", letterSpacing:-.5, lineHeight:1.1 }}>{proj?.name}</h1>
-        {gd.message && <p style={{ fontSize:14, color:"rgba(255,255,255,.55)", maxWidth:560, margin:"0 auto 24px", lineHeight:1.7 }}>{gd.message}</p>}
+      <div style={{ padding:"40px 36px 32px", textAlign:"center", borderBottom:`1px solid ${borderColor}` }}>
+        <p style={{ fontSize:11, color:mutedColor, textTransform:"uppercase", letterSpacing:2.5, margin:"0 0 10px", fontWeight:500 }}>{proj?.type} · {gd.publishedAt}</p>
+        <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:38, fontWeight:500, color:textColor, margin:"0 0 12px", letterSpacing:-.5, lineHeight:1.1 }}>{galleryTitle}</h1>
+        {gd.message && <p style={{ fontSize:14, color:mutedColor, maxWidth:560, margin:"0 auto 24px", lineHeight:1.7 }}>{gd.message}</p>}
         {expireSoon && (
           <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"7px 16px", background:"rgba(255,200,60,.15)", border:"1px solid rgba(255,200,60,.35)", borderRadius:99, marginBottom:18, fontSize:12, color:"#f0c84a", fontWeight:600 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -2731,7 +2823,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
             </button>
           )}
           <button onClick={() => setShowFavOnly(f=>!f)}
-            style={{ display:"flex", alignItems:"center", gap:7, padding:"10px 22px", background:showFavOnly?"rgba(224,90,106,.25)":"rgba(255,255,255,.1)", border:`1px solid ${showFavOnly?"#e05a6a":"rgba(255,255,255,.2)"}`, borderRadius:10, fontSize:13, fontWeight:500, cursor:"pointer", color:showFavOnly?"#e05a6a":"rgba(255,255,255,.7)", transition:"all .15s" }}>
+            style={{ display:"flex", alignItems:"center", gap:7, padding:"10px 22px", background:showFavOnly?"rgba(224,90,106,.25)":(isDark?"rgba(255,255,255,.1)":"rgba(0,0,0,.06)"), border:`1px solid ${showFavOnly?"#e05a6a":(isDark?"rgba(255,255,255,.2)":"#d0ccc6")}`, borderRadius:10, fontSize:13, fontWeight:500, cursor:"pointer", color:showFavOnly?"#e05a6a":mutedColor, transition:"all .15s" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill={showFavOnly?"#e05a6a":"none"} stroke={showFavOnly?"#e05a6a":"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
             Favorites {favs.length > 0 ? `(${favs.length})` : ""}
           </button>
@@ -2740,17 +2832,17 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
 
       {/* Selection mode banner */}
       {selMode !== "none" && !submitted && (
-        <div style={{ padding:"14px 28px", background: selCount>=selMin ? "rgba(42,90,58,.6)" : "rgba(255,255,255,.06)", borderBottom:"1px solid rgba(255,255,255,.08)", display:"flex", alignItems:"center", gap:16 }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={selCount>=selMin?"#6ee7b7":"rgba(255,255,255,.5)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+        <div style={{ padding:"14px 28px", background: selCount>=selMin ? "rgba(42,90,58,.6)" : (isDark?"rgba(255,255,255,.06)":"rgba(0,0,0,.04)"), borderBottom:`1px solid ${borderColor}`, display:"flex", alignItems:"center", gap:16 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={selCount>=selMin?"#6ee7b7":mutedColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
           <div style={{ flex:1 }}>
-            <p style={{ fontSize:12, fontWeight:600, color:selCount>=selMin?"#6ee7b7":"rgba(255,255,255,.7)", margin:"0 0 2px" }}>
+            <p style={{ fontSize:12, fontWeight:600, color:selCount>=selMin?"#6ee7b7":textColor, margin:"0 0 2px" }}>
               {selMode==="required" ? `Your photographer requests ${selMin}–${selMax} selections` : "Select your favorite photos"}
             </p>
-            <div style={{ height:3, background:"rgba(255,255,255,.1)", borderRadius:99, overflow:"hidden" }}>
+            <div style={{ height:3, background:isDark?"rgba(255,255,255,.1)":"rgba(0,0,0,.1)", borderRadius:99, overflow:"hidden" }}>
               <div style={{ height:"100%", background:selCount>=selMin?"#6ee7b7":accent, width:`${Math.min(selCount/(selMax||1)*100,100)}%`, transition:"width .3s", borderRadius:99 }}/>
             </div>
           </div>
-          <span style={{ fontSize:13, fontWeight:700, color:"rgba(255,255,255,.8)", whiteSpace:"nowrap" }}>{selCount} selected</span>
+          <span style={{ fontSize:13, fontWeight:700, color:textColor, whiteSpace:"nowrap" }}>{selCount} selected</span>
           {canSubmit && (
             <button onClick={() => setSubmitted(true)}
               style={{ padding:"8px 18px", background:accent, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
@@ -2760,52 +2852,73 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
         </div>
       )}
       {submitted && (
-        <div style={{ padding:"14px 28px", background:"rgba(42,90,58,.6)", borderBottom:"1px solid rgba(255,255,255,.08)", display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ padding:"14px 28px", background:"rgba(42,90,58,.6)", borderBottom:`1px solid ${borderColor}`, display:"flex", alignItems:"center", gap:10 }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6ee7b7" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
           <p style={{ fontSize:13, fontWeight:600, color:"#6ee7b7", margin:0 }}>Selections submitted! Your photographer will review your {selCount} choices.</p>
         </div>
       )}
 
-      {/* Gallery grid */}
+      {/* Gallery — layout driven by delivery settings */}
       <div style={{ padding:"24px 24px 32px" }}>
         {displayPhotos.length === 0 ? (
-          <p style={{ textAlign:"center", color:"rgba(255,255,255,.3)", fontSize:13, padding:"40px 0" }}>No favorites yet — heart some photos below.</p>
-        ) : (
-          <div style={{ columns:"3", columnGap:2 }}>
-            {displayPhotos.map(({bg,i}) => {
-              const fav     = isFav(i);
-              const flagged = isFlagged(i);
-              const src     = imgSrc(bg);
-              return (
-                <div key={i} style={{ position:"relative", marginBottom:2, overflow:"hidden", cursor:"pointer", breakInside:"avoid", display:"block" }}
-                  onClick={() => setLightbox(i)}
-                  onMouseEnter={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="1"; }}
-                  onMouseLeave={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="0"; }}>
-                  {src
-                    ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-                    : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(bg) }}/>
-                  }
-                  {/* Hover overlay */}
-                  <div className="cgv-overlay" style={{ position:"absolute", inset:0, opacity:0, transition:"opacity .15s", pointerEvents:"none" }}>
-                    <div style={{ position:"absolute", top:8, right:8, display:"flex", gap:5 }}>
-                      <button onClick={ev => { ev.stopPropagation(); toggleFav(i); }}
-                        style={{ width:32, height:32, borderRadius:8, background:"rgba(0,0,0,.55)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", pointerEvents:"auto" }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill={fav?"#e05a6a":"none"} stroke={fav?"#e05a6a":"#fff"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
-                      </button>
-                      <button onClick={ev => { ev.stopPropagation(); setFlagModal({ photoIndex:i, note: flags.find(f=>f.photoIndex===i)?.note || "" }); }}
-                        style={{ width:32, height:32, borderRadius:8, background:"rgba(0,0,0,.55)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", pointerEvents:"auto" }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill={flagged?"#f0a040":"none"} stroke={flagged?"#f0a040":"#fff"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-                      </button>
+          <p style={{ textAlign:"center", color:mutedColor, fontSize:13, padding:"40px 0" }}>No favorites yet — heart some photos below.</p>
+        ) : galleryStyle === "grid" ? (
+          <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
+            {displayPhotos.map(item => <PhotoTile key={item.i} item={item}/>)}
+          </div>
+        ) : galleryStyle === "slideshow" ? (() => {
+          const curPhoto = displayPhotos[lightbox ?? 0]?.bg ?? displayPhotos[0]?.bg;
+          const curSrc   = imgSrc(curPhoto);
+          return (
+            <div>
+              <div style={{ position:"relative", background:isDark?"#000":"#111", minHeight:360, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:12, overflow:"hidden" }}>
+                {curSrc
+                  ? <img src={curSrc} alt="" style={{ maxWidth:"100%", maxHeight:"65vh", objectFit:"contain", display:"block" }} loading="lazy"/>
+                  : <div style={{ width:"100%", height:420, background:bgFallback(curPhoto) }}/>
+                }
+                <button onClick={e=>{ e.stopPropagation(); setLightbox(i => ((i??0)-1+displayPhotos.length)%displayPhotos.length); }} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", width:42, height:42, borderRadius:10, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <p style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", color:"#fff", fontSize:12, background:"rgba(0,0,0,.45)", padding:"4px 12px", borderRadius:99, margin:0 }}>{(lightbox??0)+1} / {displayPhotos.length}</p>
+                <button onClick={e=>{ e.stopPropagation(); setLightbox(i => ((i??0)+1)%displayPhotos.length); }} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", width:42, height:42, borderRadius:10, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              </div>
+              <div style={{ display:"flex", gap:2, marginTop:2, overflowX:"auto" }}>
+                {displayPhotos.map((item, idx) => {
+                  const src = imgSrc(item.bg);
+                  return (
+                    <div key={item.i} onClick={() => setLightbox(idx)} style={{ width:70, flexShrink:0, cursor:"pointer", outline:`2px solid ${(lightbox??0)===idx?accent:"transparent"}`, outlineOffset:"-2px", overflow:"hidden" }}>
+                      {src ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                           : <div style={{ width:70, height:50, background:bgFallback(item.bg) }}/>}
                     </div>
-                  </div>
-                  {/* Persistent indicators */}
-                  <div style={{ position:"absolute", bottom:6, left:6, display:"flex", gap:4 }}>
-                    {fav && <div style={{ width:20, height:20, borderRadius:6, background:"rgba(224,90,106,.9)", display:"flex", alignItems:"center", justifyContent:"center" }}><svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="#fff" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>}
-                    {flagged && <div style={{ width:20, height:20, borderRadius:6, background:"rgba(240,160,64,.9)", display:"flex", alignItems:"center", justifyContent:"center" }}><svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="#fff" strokeWidth="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></div>}
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })() : galleryStyle === "magazine" ? (
+          <div>
+            {displayPhotos[0] && (
+              <div style={{ position:"relative", overflow:"hidden", cursor:"pointer", borderRadius:12, marginBottom:2 }} onClick={() => setLightbox(displayPhotos[0].i)}>
+                {imgSrc(displayPhotos[0].bg)
+                  ? <img src={imgSrc(displayPhotos[0].bg)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                  : <div style={{ width:"100%", height:360, background:bgFallback(displayPhotos[0].bg) }}/>
+                }
+                <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"32px 28px 24px", background:"linear-gradient(to top, rgba(0,0,0,.7), transparent)" }}>
+                  <p style={{ color:"#fff", fontSize:22, fontWeight:500, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{galleryTitle}</p>
+                  <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:"4px 0 0" }}>{proj?.type} · {photos.length} photos</p>
                 </div>
-              );
-            })}
+              </div>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
+              {displayPhotos.slice(1).map(item => <PhotoTile key={item.i} item={item}/>)}
+            </div>
+          </div>
+        ) : (
+          /* Default: masonry */
+          <div style={{ columns:cols, columnGap:2 }}>
+            {displayPhotos.map(item => <PhotoTile key={item.i} item={item} extraStyle={{ breakInside:"avoid", display:"block", marginBottom:2 }}/>)}
           </div>
         )}
       </div>
@@ -2817,7 +2930,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
           {/* Lightbox top bar */}
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 20px", flexShrink:0, background:"rgba(0,0,0,.3)" }}
             onClick={e=>e.stopPropagation()}>
-            <span style={{ fontSize:12, color:"rgba(255,255,255,.4)" }}>{proj?.name}</span>
+            <span style={{ fontSize:12, color:"rgba(255,255,255,.4)" }}>{galleryTitle}</span>
             <span style={{ fontSize:12, color:"rgba(255,255,255,.4)" }}>{lightbox+1} / {photos.length}</span>
             <button onClick={() => setLightbox(null)} style={{ width:34, height:34, borderRadius:9, background:"rgba(255,255,255,.1)", border:"none", cursor:"pointer", fontSize:18, color:"rgba(255,255,255,.7)", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
           </div>
@@ -3187,23 +3300,36 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
 const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp }) => {
   const photos_init = useRef(false);
   const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
-  // helper: get renderable background value from a photo entry
   // Photo helpers — always show full image, never crop
   const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
   const bgFallback = (p) => typeof p === "string" ? p : C.warm;
-  const [thumbSize,    setThumbSize]    = useState("M");    // S | M | L
-  const [layoutMode,   setLayoutMode]   = useState("masonry"); // grid | masonry | slideshow | magazine
+
+  // Read delivery early so state can initialize from it
+  const delivery  = galleryDelivery?.[proj.id];
+
+  const [thumbSize,    setThumbSize]    = useState(delivery?.colSize || "M");
+  const [layoutMode,   setLayoutMode]   = useState(delivery?.galleryStyle || "masonry");
   const [lightbox,     setLightbox]     = useState(null);   // index
   const [showPortal,   setShowPortal]   = useState(false);
   const [showDelivery, setShowDelivery] = useState(false);
-  const [portalStyle,  setPortalStyle]  = useState("grid");
-  const [portalDark,   setPortalDark]   = useState(false);
-  const [portalTitle,  setPortalTitle]  = useState(proj.name + " — Your Gallery");
-  const [portalMsg,    setPortalMsg]    = useState("Thank you for trusting me with your story. These are yours to keep.");
+  const [portalStyle,  setPortalStyle]  = useState(delivery?.galleryStyle || "masonry");
+  const [portalDark,   setPortalDark]   = useState(delivery?.darkMode || false);
+  const [portalTitle,  setPortalTitle]  = useState(delivery?.galleryTitle || proj.name + " — Your Gallery");
+  const [portalMsg,    setPortalMsg]    = useState(delivery?.message || "Thank you for trusting me with your story. These are yours to keep.");
   const [dlAll,        setDlAll]        = useState(false);
   const [downloaded,   setDownloaded]   = useState({});
   const [dragOver,     setDragOver]     = useState(false);
   const [uploading,    setUploading]    = useState(false);
+
+  // Helper: save a change to delivery object
+  const saveDelivery = (changes) => {
+    if (setGalleryDelivery) {
+      setGalleryDelivery(prev => ({
+        ...prev,
+        [proj.id]: { ...(prev?.[proj.id] || {}), ...changes }
+      }));
+    }
+  };
 
   // Sync from parent when parent loads persisted photos
   useEffect(() => {
@@ -3221,8 +3347,6 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       return next;
     });
   };
-
-  const delivery  = galleryDelivery?.[proj.id];
   const favIdxs   = clientFavorites?.[proj.id] || [];
   const flagItems = clientFlags?.[proj.id]     || [];
   const flaggedIdxs = flagItems.map(f => f.photoIndex);
@@ -3263,7 +3387,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         {/* Thumb size */}
         <div style={{ display:"flex", gap:1, background:C.warm, borderRadius:9, padding:3, border:`1px solid ${C.border}` }}>
           {["S","M","L"].map(s => (
-            <button key={s} onClick={() => setThumbSize(s)}
+            <button key={s} onClick={() => { setThumbSize(s); saveDelivery({ colSize: s }); }}
               style={{ padding:"5px 13px", borderRadius:7, border:"none", cursor:"pointer", fontSize:12, fontWeight:500,
                 background:thumbSize===s ? "#fff" : "transparent",
                 color:thumbSize===s ? C.ink : C.muted,
@@ -3277,7 +3401,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         {/* Layout mode */}
         <div style={{ display:"flex", gap:1, background:C.warm, borderRadius:9, padding:3, border:`1px solid ${C.border}` }}>
           {[["grid","grid"],["masonry","layers"],["slideshow","film"],["magazine","layout2"]].map(([id,icon]) => (
-            <button key={id} onClick={() => setLayoutMode(id)} title={id.charAt(0).toUpperCase()+id.slice(1)}
+            <button key={id} onClick={() => { setLayoutMode(id); setPortalStyle(id); saveDelivery({ galleryStyle: id }); }} title={id.charAt(0).toUpperCase()+id.slice(1)}
               style={{ width:30, height:30, borderRadius:7, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
                 background:layoutMode===id ? "#fff" : "transparent",
                 color:layoutMode===id ? C.ink : C.muted,
@@ -3558,14 +3682,14 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
             <div style={{ background:C.warm, borderBottom:`1px solid ${C.border}`, padding:"10px 20px", display:"flex", alignItems:"center", gap:14, flexShrink:0, flexWrap:"wrap" }}>
               <span style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.3 }}>Gallery Style</span>
               {GALLERY_STYLES.map(gs => (
-                <button key={gs.id} onClick={() => setPortalStyle(gs.id)}
+                <button key={gs.id} onClick={() => { setPortalStyle(gs.id); setLayoutMode(gs.id); saveDelivery({ galleryStyle: gs.id }); }}
                   style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${portalStyle===gs.id?C.ink:C.border}`, background:portalStyle===gs.id?C.ink:"#fff", color:portalStyle===gs.id?"#fff":C.muted, fontSize:12, fontWeight:500, cursor:"pointer", transition:"all .15s" }}>
                   {gs.label}
                 </button>
               ))}
               <div style={{ flex:1 }}/>
               <span style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.3 }}>Theme</span>
-              <button onClick={() => setPortalDark(!portalDark)}
+              <button onClick={() => { setPortalDark(!portalDark); saveDelivery({ darkMode: !portalDark }); }}
                 style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:portalDark?C.ink:"#fff", color:portalDark?"#fff":C.muted, fontSize:12, fontWeight:500, cursor:"pointer" }}>
                 {portalDark ? "🌙 Dark" : "☀️ Light"}
               </button>
@@ -3573,10 +3697,10 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
 
             {/* Customise title/msg */}
             <div style={{ background:"#fff", borderBottom:`1px solid ${C.border}`, padding:"8px 20px", display:"flex", gap:10, alignItems:"center", flexShrink:0 }}>
-              <input value={portalTitle} onChange={e=>setPortalTitle(e.target.value)}
+              <input value={portalTitle} onChange={e=>{ setPortalTitle(e.target.value); saveDelivery({ galleryTitle: e.target.value }); }}
                 style={{ flex:2, padding:"6px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:13, fontFamily:"inherit", color:C.ink, background:C.cream }}
                 placeholder="Gallery title shown to client…"/>
-              <input value={portalMsg} onChange={e=>setPortalMsg(e.target.value)}
+              <input value={portalMsg} onChange={e=>{ setPortalMsg(e.target.value); saveDelivery({ message: e.target.value }); }}
                 style={{ flex:3, padding:"6px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:13, fontFamily:"inherit", color:C.ink, background:C.cream }}
                 placeholder="Personal message to client…"/>
             </div>
