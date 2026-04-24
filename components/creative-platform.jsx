@@ -18,7 +18,7 @@ const _saveState = async (userId, patch) => {
   if (patch.gallery_photos) {
     const cleanPhotos = {};
     for (const [projId, arr] of Object.entries(patch.gallery_photos)) {
-      cleanPhotos[projId] = (arr || []).filter(ph => ph.url && !ph.url.startsWith("data:") && !ph.uploading);
+      cleanPhotos[projId] = (arr || []).filter(ph => ph.url && !ph.url.startsWith("data:") && !ph.url.startsWith("blob:") && !ph.uploading);
     }
     cleanPatch = { ...patch, gallery_photos: cleanPhotos };
   }
@@ -2661,9 +2661,15 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
     message: "", expiryEnabled: false,
   };
   const gd = delivery || GALLERY_DELIVERY_SEED[proj?.id] || GALLERY_DELIVERY_SEED[1] || defaultDelivery;
-  // Photo helpers — always full aspect ratio, never crop
+  // Photo/video helpers — always full aspect ratio, never crop
   const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
   const bgFallback = (p) => typeof p === "string" ? p : "#2a2a2a";
+  const isVid = (p) => {
+    if (!p) return false;
+    if (p.type === "video") return true;
+    const url = typeof p === "string" ? p : p.url;
+    return url && /\.(mp4|mov|webm|avi|mkv|m4v|ogv)(\?|$)/i.test(url);
+  };
   const favs    = clientFavorites || [];
   const flags   = clientFlags     || [];
 
@@ -2744,7 +2750,16 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
         onMouseEnter={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="1"; }}
         onMouseLeave={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="0"; }}>
         {src
-          ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+          ? (isVid(photo)
+              ? <div style={{ position:"relative", lineHeight:0 }}>
+                  <video src={src} muted playsInline preload="metadata" style={{ width:"100%", height:"auto", display:"block" }}/>
+                  <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+                    <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><polygon points="5,3 19,12 5,21"/></svg>
+                    </div>
+                  </div>
+                </div>
+              : <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>)
           : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
         }
         <div className="cgv-overlay" style={{ position:"absolute", inset:0, opacity:0, transition:"opacity .15s", background:"rgba(0,0,0,.25)", pointerEvents:"none" }}>
@@ -2951,7 +2966,9 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             {imgSrc(photos[lightbox])
-              ? <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"82vw", maxHeight:"78vh", objectFit:"contain", display:"block", borderRadius:4 }}/>
+              ? (isVid(photos[lightbox])
+                  ? <video src={imgSrc(photos[lightbox])} controls autoPlay style={{ maxWidth:"82vw", maxHeight:"78vh", borderRadius:4, display:"block", background:"#000" }}/>
+                  : <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"82vw", maxHeight:"78vh", objectFit:"contain", display:"block", borderRadius:4 }}/>)
               : <div style={{ width:"min(82vw,780px)", height:"min(78vh,560px)", background:bgFallback(photos[lightbox]) }}/>
             }
             <button onClick={lbNext} style={{ position:"absolute", right:16, width:48, height:48, borderRadius:12, background:"rgba(255,255,255,.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
@@ -3310,9 +3327,34 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
 const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp }) => {
   const photos_init = useRef(false);
   const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
-  // Photo helpers — always show full image, never crop
+  // Photo/video helpers — always show full media, never crop
   const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
   const bgFallback = (p) => typeof p === "string" ? p : C.warm;
+  const isVid = (p) => {
+    if (!p) return false;
+    if (p.type === "video") return true;
+    const url = typeof p === "string" ? p : p.url;
+    return url && /\.(mp4|mov|webm|avi|mkv|m4v|ogv)(\?|$)/i.test(url);
+  };
+  // Renders an img or video tile — videos show first frame + play badge
+  const MediaTile = ({ photo, imgStyle = {}, videoStyle = {}, controls = false }) => {
+    const src = imgSrc(photo);
+    if (!src) return <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>;
+    if (isVid(photo)) return (
+      <div style={{ position:"relative", lineHeight:0 }}>
+        <video src={src} muted playsInline preload="metadata" controls={controls}
+          style={{ width:"100%", height:"auto", display:"block", ...videoStyle }}/>
+        {!controls && (
+          <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+            <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(2px)" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+    return <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block", ...imgStyle }} loading="lazy"/>;
+  };
 
   // Read delivery early so state can initialize from it
   const delivery  = galleryDelivery?.[proj.id];
@@ -3365,45 +3407,48 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     if (!files || files.length === 0) return;
     setUploading(true);
     const fileArr = Array.from(files);
-    // Insert placeholder entries so photos appear immediately while uploading
-    const placeholders = fileArr.map((file, idx) => ({
-      url: null,          // will be replaced by storage URL
-      name: file.name,
-      uploading: true,
-      _tmpId: `tmp_${Date.now()}_${idx}`,
-    }));
-    setPhotos(p => [...p, ...placeholders]);
-
     let done = 0;
+
     fileArr.forEach((file, idx) => {
-      const tmpId = placeholders[idx]._tmpId;
-      // Local base64 preview while upload runs
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const localUrl = ev.target.result;
-        // Show local preview immediately
-        setPhotos(prev => prev.map(ph => ph._tmpId === tmpId ? { ...ph, url: localUrl } : ph));
-        // Upload to Supabase Storage
-        const ext = file.name.split(".").pop().toLowerCase();
-        const path = `gallery/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        supabase.storage.from("Media").upload(path, file, { upsert: true }).then(({ data, error }) => {
-          if (!error && data) {
-            const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-            // Replace local preview with permanent public URL
-            setPhotos(prev => prev.map(ph =>
-              ph._tmpId === tmpId ? { url: publicUrl, name: file.name } : ph
-            ));
-          } else {
-            // Upload failed — keep local preview but remove uploading flag
-            setPhotos(prev => prev.map(ph =>
-              ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
-            ));
-          }
-          done++;
-          if (done === fileArr.length) setUploading(false);
-        });
-      };
-      reader.readAsDataURL(file);
+      const tmpId = `tmp_${Date.now()}_${idx}`;
+      const isVideo = file.type.startsWith("video/");
+
+      // Use a blob URL for instant local preview — works for both images and videos,
+      // doesn't load the whole file into memory like base64 would
+      const blobUrl = URL.createObjectURL(file);
+
+      // Add to gallery immediately with the local blob preview
+      setPhotos(prev => [...prev, {
+        url: blobUrl,
+        name: file.name,
+        type: isVideo ? "video" : "image",
+        uploading: true,
+        _tmpId: tmpId,
+      }]);
+
+      // Upload to Supabase Storage
+      const ext = file.name.split(".").pop().toLowerCase();
+      const path = `gallery/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      supabase.storage.from("Media").upload(path, file, { upsert: true }).then(({ data, error }) => {
+        if (!error && data) {
+          const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+          // Swap blob URL → permanent storage URL, release blob memory
+          URL.revokeObjectURL(blobUrl);
+          setPhotos(prev => prev.map(ph =>
+            ph._tmpId === tmpId
+              ? { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" }
+              : ph
+          ));
+        } else {
+          // Upload failed — keep the blob preview but mark not-uploading
+          // (blob URL stays valid for the session; won't persist after reload)
+          setPhotos(prev => prev.map(ph =>
+            ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
+          ));
+        }
+        done++;
+        if (done === fileArr.length) setUploading(false);
+      });
     });
   };
 
@@ -3482,9 +3527,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
             <Ic d={P.upload} size={28} style={{ color:C.muted }}/>
           </div>
           <p style={{ fontSize:16, fontWeight:600, color:C.ink, marginBottom:6 }}>Drop photos here to upload</p>
-          <p style={{ fontSize:13, color:C.muted, marginBottom:20 }}>JPG, PNG, WEBP — up to 200 photos per gallery</p>
+          <p style={{ fontSize:13, color:C.muted, marginBottom:20 }}>JPG, PNG, WEBP, MP4, MOV — photos & videos</p>
           <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 24px", background:C.ink, color:"#fff", borderRadius:10, fontSize:13, fontWeight:600 }}>
-            <Ic d={P.upload} size={14}/> Choose Photos
+            <Ic d={P.upload} size={14}/> Choose Files
           </div>
           {uploading && <p style={{ fontSize:12, color:C.muted, marginTop:14 }}>Uploading…</p>}
         </div>
@@ -3560,10 +3605,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               style={{ cursor:"pointer", overflow:"hidden", position:"relative" }}
               onMouseEnter={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="1"; e.currentTarget.style.opacity=".92"; }}
               onMouseLeave={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="0"; e.currentTarget.style.opacity="1"; }}>
-              {imgSrc(photo)
-                ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-                : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
-              }
+              <MediaTile photo={photo}/>
               <div className="dl-btn" style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s", backdropFilter:"blur(4px)" }}
                 onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}>
                 <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:"#fff" }}/>
@@ -3583,10 +3625,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               style={{ breakInside:"avoid", display:"block", width:"100%", position:"relative", overflow:"hidden", marginBottom:2, cursor:"pointer" }}
               onMouseEnter={e => { e.currentTarget.style.opacity=".88"; }}
               onMouseLeave={e => { e.currentTarget.style.opacity="1"; }}>
-              {imgSrc(photo)
-                ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-                : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
-              }
+              <MediaTile photo={photo}/>
               <button onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}
                 style={{ position:"absolute", bottom:7, right:7, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
                 <Ic d={downloaded[i]?P.check:P.down} size={12} style={{ color:"#fff" }}/>
@@ -3601,12 +3640,11 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {/* ── SLIDESHOW layout ── */}
       {photos.length > 0 && layoutMode === "slideshow" && (() => {
         const curPhoto = photos[lightbox ?? 0];
-        const curSrc = imgSrc(curPhoto);
         return (
           <div>
             <div style={{ position:"relative", overflow:"hidden", background:"#111", display:"flex", alignItems:"center", justifyContent:"center", minHeight:360 }}>
-              {curSrc
-                ? <img src={curSrc} alt="" style={{ maxWidth:"100%", maxHeight:"70vh", objectFit:"contain", display:"block" }} loading="lazy"/>
+              {imgSrc(curPhoto)
+                ? <MediaTile photo={curPhoto} videoStyle={{ maxWidth:"100%", maxHeight:"70vh", objectFit:"contain" }} controls={isVid(curPhoto)}/>
                 : <div style={{ width:"100%", height:480, background:bgFallback(curPhoto) }}/>
               }
               <button onClick={e => { e.stopPropagation(); lbPrev(); }} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", zIndex:2 }}>
@@ -3621,15 +3659,11 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
             </div>
             <div style={{ display:"flex", gap:2, marginTop:2, overflowX:"auto" }}>
               {photos.map((photo,i) => {
-                const src = imgSrc(photo);
                 const tw = { S:44, M:70, L:100 }[thumbSize] || 70;
                 return (
                   <div key={i} onClick={() => setLightbox(i)}
                     style={{ width:tw, flexShrink:0, cursor:"pointer", outline:`2px solid ${(lightbox??0)===i?C.ink:"transparent"}`, outlineOffset:"-2px", transition:"outline .15s", overflow:"hidden" }}>
-                    {src
-                      ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-                      : <div style={{ width:tw, height:50, background:bgFallback(photo) }}/>
-                    }
+                    <MediaTile photo={photo}/>
                   </div>
                 );
               })}
@@ -3642,11 +3676,8 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {photos.length > 0 && layoutMode === "magazine" && (
         <div>
           <div style={{ overflow:"hidden", cursor:"pointer", marginBottom:2, position:"relative" }} onClick={() => setLightbox(0)}>
-            {imgSrc(photos[0])
-              ? <img src={imgSrc(photos[0])} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-              : <div style={{ width:"100%", height:360, background:bgFallback(photos[0]) }}/>
-            }
-            <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"32px 28px 24px", background:"linear-gradient(to top, rgba(0,0,0,.65), transparent)" }}>
+            <MediaTile photo={photos[0]}/>
+            <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"32px 28px 24px", background:"linear-gradient(to top, rgba(0,0,0,.65), transparent)", pointerEvents:"none" }}>
               <p style={{ color:"#fff", fontSize:20, fontWeight:600, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{proj.name}</p>
               <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:"4px 0 0" }}>{proj.type} · {photos.length} photos</p>
             </div>
@@ -3657,10 +3688,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
                 style={{ overflow:"hidden", cursor:"pointer" }}
                 onMouseEnter={e => e.currentTarget.style.opacity=".82"}
                 onMouseLeave={e => e.currentTarget.style.opacity="1"}>
-                {imgSrc(photo)
-                  ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
-                  : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
-                }
+                <MediaTile photo={photo}/>
               </div>
             ))}
           </div>
@@ -3677,7 +3705,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           </button>
           <div onClick={e => e.stopPropagation()} style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"center", maxWidth:"90vw", maxHeight:"90vh" }}>
             {imgSrc(photos[lightbox])
-              ? <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"88vw", maxHeight:"85vh", objectFit:"contain", borderRadius:4, display:"block" }}/>
+              ? (isVid(photos[lightbox])
+                  ? <video src={imgSrc(photos[lightbox])} controls autoPlay style={{ maxWidth:"88vw", maxHeight:"85vh", borderRadius:4, display:"block", background:"#000" }}/>
+                  : <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"88vw", maxHeight:"85vh", objectFit:"contain", borderRadius:4, display:"block" }}/>)
               : <div style={{ width:600, height:400, background:bgFallback(photos[lightbox]), borderRadius:12 }}/>
             }
             <div style={{ position:"absolute", top:12, right:12, display:"flex", gap:8 }}>
