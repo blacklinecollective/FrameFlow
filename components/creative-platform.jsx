@@ -2277,7 +2277,7 @@ const EXTRA_GRADS = [
 
 // ── GalleryDeliveryPanel ──────────────────────────────────────
 const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, clientFlags, photos, onClose }) => {
-  const gd   = delivery || GALLERY_DELIVERY_SEED[proj.id] || GALLERY_DELIVERY_SEED[1];
+  const gd   = delivery || GALLERY_DELIVERY_SEED[proj.id] || GALLERY_DELIVERY_SEED[1] || { status:"draft", downloadEnabled:true, downloadType:"full", pinEnabled:false, selectionMode:"none" };
   const favs = clientFavorites || [];
   const flags= clientFlags     || [];
   const [tab,     setTab]    = useState("settings"); // settings | analytics
@@ -2596,9 +2596,18 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
 
 // ── ClientGalleryView ─────────────────────────────────────────
 const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, brandKit, photos: photosProp }) => {
-  const gd      = delivery || GALLERY_DELIVERY_SEED[proj?.id] || GALLERY_DELIVERY_SEED[1];
   const photos  = (photosProp && photosProp.length > 0) ? photosProp : (PHOTOS[proj?.id] || PHOTOS[1] || []);
-  const photoBg = (p) => typeof p === "string" ? p : (p?.url ? `#0e0e0e url("${p.url}") center/contain no-repeat` : "#1a1a1a");
+  // Default delivery: if photos exist, treat as published so they're always visible
+  const defaultDelivery = {
+    status: photos.length > 0 ? "published" : "draft",
+    downloadEnabled: true, downloadType: "full",
+    pinEnabled: false, selectionMode: "none",
+    message: "", expiryEnabled: false,
+  };
+  const gd = delivery || GALLERY_DELIVERY_SEED[proj?.id] || GALLERY_DELIVERY_SEED[1] || defaultDelivery;
+  // Photo helpers — always full aspect ratio, never crop
+  const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
+  const bgFallback = (p) => typeof p === "string" ? p : "#2a2a2a";
   const favs    = clientFavorites || [];
   const flags   = clientFlags     || [];
 
@@ -2762,18 +2771,22 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
         {displayPhotos.length === 0 ? (
           <p style={{ textAlign:"center", color:"rgba(255,255,255,.3)", fontSize:13, padding:"40px 0" }}>No favorites yet — heart some photos below.</p>
         ) : (
-          <div style={{ columns: "3", columnGap:6 }}>
+          <div style={{ columns:"3", columnGap:2 }}>
             {displayPhotos.map(({bg,i}) => {
               const fav     = isFav(i);
               const flagged = isFlagged(i);
+              const src     = imgSrc(bg);
               return (
-                <div key={i} style={{ position:"relative", marginBottom:6, borderRadius:8, overflow:"hidden", cursor:"pointer", breakInside:"avoid", display:"block" }}
-                  onClick={() => setLightbox(i)}>
-                  <div style={{ height: [160,200,140,220,180,150,200,170][i%8], background:photoBg(bg), transition:"opacity .15s" }}
-                    onMouseEnter={e => { e.currentTarget.style.opacity=".85"; e.currentTarget.nextSibling.style.opacity="1"; }}
-                    onMouseLeave={e => { e.currentTarget.style.opacity="1"; e.currentTarget.nextSibling.style.opacity="0"; }}/>
+                <div key={i} style={{ position:"relative", marginBottom:2, overflow:"hidden", cursor:"pointer", breakInside:"avoid", display:"block" }}
+                  onClick={() => setLightbox(i)}
+                  onMouseEnter={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="1"; }}
+                  onMouseLeave={e => { const ov=e.currentTarget.querySelector(".cgv-overlay"); if(ov) ov.style.opacity="0"; }}>
+                  {src
+                    ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                    : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(bg) }}/>
+                  }
                   {/* Hover overlay */}
-                  <div style={{ position:"absolute", inset:0, opacity:0, transition:"opacity .15s", pointerEvents:"none" }}>
+                  <div className="cgv-overlay" style={{ position:"absolute", inset:0, opacity:0, transition:"opacity .15s", pointerEvents:"none" }}>
                     <div style={{ position:"absolute", top:8, right:8, display:"flex", gap:5 }}>
                       <button onClick={ev => { ev.stopPropagation(); toggleFav(i); }}
                         style={{ width:32, height:32, borderRadius:8, background:"rgba(0,0,0,.55)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", pointerEvents:"auto" }}>
@@ -2814,7 +2827,10 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
             <button onClick={lbPrev} style={{ position:"absolute", left:16, width:48, height:48, borderRadius:12, background:"rgba(255,255,255,.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <div style={{ width:"min(75vw,680px)", height:"min(72vh,500px)", borderRadius:12, background:photoBg(photos[lightbox])||"#333", boxShadow:"0 40px 80px rgba(0,0,0,.6)" }}/>
+            {imgSrc(photos[lightbox])
+              ? <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"82vw", maxHeight:"78vh", objectFit:"contain", display:"block", borderRadius:4 }}/>
+              : <div style={{ width:"min(82vw,780px)", height:"min(78vh,560px)", background:bgFallback(photos[lightbox]) }}/>
+            }
             <button onClick={lbNext} style={{ position:"absolute", right:16, width:48, height:48, borderRadius:12, background:"rgba(255,255,255,.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
@@ -2857,7 +2873,12 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
           <div style={{ background:"#1a1a1a", borderRadius:18, padding:24, width:"100%", maxWidth:400, border:"1px solid rgba(255,255,255,.1)" }}
             onClick={e=>e.stopPropagation()}>
             <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
-              <div style={{ width:44, height:44, borderRadius:9, background:photos[flagModal.photoIndex]||"#333", flexShrink:0, border:"1px solid rgba(255,255,255,.1)" }}/>
+              <div style={{ width:44, height:44, borderRadius:9, overflow:"hidden", flexShrink:0, border:"1px solid rgba(255,255,255,.1)", background:"#333" }}>
+                {imgSrc(photos[flagModal.photoIndex])
+                  ? <img src={imgSrc(photos[flagModal.photoIndex])} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+                  : null
+                }
+              </div>
               <div>
                 <p style={{ fontSize:14, fontWeight:600, color:"#fff", margin:0 }}>Leave a note</p>
                 <p style={{ fontSize:12, color:"rgba(255,255,255,.4)", margin:0 }}>Photo {flagModal.photoIndex+1} · This will be visible to the photographer</p>
@@ -3167,7 +3188,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
   const photos_init = useRef(false);
   const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
   // helper: get renderable background value from a photo entry
-  const photoBg = (p) => typeof p === "string" ? p : (p?.url ? `#1a1a1a url("${p.url}") center/contain no-repeat` : C.warm);
+  // Photo helpers — always show full image, never crop
+  const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
+  const bgFallback = (p) => typeof p === "string" ? p : C.warm;
   const [thumbSize,    setThumbSize]    = useState("M");    // S | M | L
   const [layoutMode,   setLayoutMode]   = useState("masonry"); // grid | masonry | slideshow | magazine
   const [lightbox,     setLightbox]     = useState(null);   // index
@@ -3357,7 +3380,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           </div>
           {flagItems.map((fl, idx) => (
             <div key={idx} style={{ display:"flex", alignItems:"flex-start", gap:10, marginTop:idx>0?8:0, padding:idx>0?"8px 0 0":"0", borderTop:idx>0?"1px solid #f0e0a0":"none" }}>
-              <div style={{ width:36, height:28, borderRadius:6, background:photos[fl.photoIndex] || C.warm, flexShrink:0 }}/>
+              <div style={{ width:36, height:28, borderRadius:6, overflow:"hidden", flexShrink:0, background:C.warm }}>
+                {imgSrc(photos[fl.photoIndex]) && <img src={imgSrc(photos[fl.photoIndex])} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>}
+              </div>
               <div style={{ flex:1 }}>
                 <span style={{ fontSize:11, color:C.muted }}>Photo {fl.photoIndex+1} · {fl.createdAt}</span>
                 <p style={{ fontSize:12, color:C.ink, margin:"2px 0 0", lineHeight:1.4 }}>{fl.note}</p>
@@ -3367,104 +3392,116 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         </div>
       )}
 
-      {/* ── GRID layout ── */}
+      {/* ── GRID layout — natural aspect ratio, S/M/L controls columns ── */}
       {photos.length > 0 && layoutMode === "grid" && (
-        <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:6 }}>
-          {photos.map((bg,i) => (
+        <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
+          {photos.map((photo,i) => (
             <div key={i} onClick={() => setLightbox(i)}
-              style={{ height:tileH, borderRadius:8, background:photoBg(bg), cursor:"pointer", overflow:"hidden", position:"relative", transition:"transform .15s, opacity .15s" }}
-              onMouseEnter={e => e.currentTarget.style.transform="scale(1.02)"}
-              onMouseLeave={e => e.currentTarget.style.transform="scale(1)"}>
-              <div style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(255,255,255,.85)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s" }}
-                onMouseEnter={e => e.currentTarget.style.opacity="1"}
+              style={{ cursor:"pointer", overflow:"hidden", position:"relative" }}
+              onMouseEnter={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="1"; e.currentTarget.style.opacity=".92"; }}
+              onMouseLeave={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="0"; e.currentTarget.style.opacity="1"; }}>
+              {imgSrc(photo)
+                ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+              }
+              <div className="dl-btn" style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s", backdropFilter:"blur(4px)" }}
                 onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}>
-                <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:downloaded[i]?C.green:C.ink }}/>
+                <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:"#fff" }}/>
               </div>
-              {/* Client interaction indicators */}
-              {favIdxs.includes(i) && (
-                <div style={{ position:"absolute", top:6, left:6, width:22, height:22, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.heart} size={10} style={{ color:"#fff" }}/>
-                </div>
-              )}
-              {flaggedIdxs.includes(i) && (
-                <div style={{ position:"absolute", top:6, left: favIdxs.includes(i) ? 32 : 6, width:22, height:22, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.flag} size={10} style={{ color:"#fff" }}/>
-                </div>
-              )}
+              {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
+              {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:favIdxs.includes(i)?29:5, width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
             </div>
           ))}
         </div>
       )}
 
-      {/* ── MASONRY layout ── */}
+      {/* ── MASONRY layout — CSS columns, natural heights, S/M/L controls column count ── */}
       {photos.length > 0 && layoutMode === "masonry" && (
-        <div className="gallery-grid">
-          {photos.map((bg,i) => (
+        <div style={{ columns:cols, columnGap:2 }}>
+          {photos.map((photo,i) => (
             <div key={i} onClick={() => setLightbox(i)}
-              style={{ height:HEIGHTS[i%HEIGHTS.length], borderRadius:10, background:photoBg(bg), cursor:"pointer", position:"relative", overflow:"hidden", transition:"opacity .2s", marginBottom:0 }}
+              style={{ breakInside:"avoid", display:"block", width:"100%", position:"relative", overflow:"hidden", marginBottom:2, cursor:"pointer" }}
               onMouseEnter={e => { e.currentTarget.style.opacity=".88"; }}
               onMouseLeave={e => { e.currentTarget.style.opacity="1"; }}>
+              {imgSrc(photo)
+                ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+              }
               <button onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}
-                style={{ position:"absolute", bottom:8, right:8, width:30, height:30, borderRadius:8, background:"rgba(255,255,255,.9)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-                <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:downloaded[i]?C.green:C.ink }}/>
+                style={{ position:"absolute", bottom:7, right:7, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
+                <Ic d={downloaded[i]?P.check:P.down} size={12} style={{ color:"#fff" }}/>
               </button>
-              {/* Client interaction indicators */}
-              {favIdxs.includes(i) && (
-                <div style={{ position:"absolute", top:6, left:6, width:22, height:22, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.heart} size={10} style={{ color:"#fff" }}/>
-                </div>
-              )}
-              {flaggedIdxs.includes(i) && (
-                <div style={{ position:"absolute", top:6, left: favIdxs.includes(i) ? 32 : 6, width:22, height:22, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.flag} size={10} style={{ color:"#fff" }}/>
-                </div>
-              )}
+              {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
+              {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:favIdxs.includes(i)?29:5, width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
             </div>
           ))}
         </div>
       )}
 
       {/* ── SLIDESHOW layout ── */}
-      {photos.length > 0 && layoutMode === "slideshow" && (
-        <div>
-          <div style={{ position:"relative", borderRadius:14, overflow:"hidden", height:480, background:photoBg(photos[lightbox??0]), display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px" }}>
-            <button onClick={lbPrev} style={{ width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-              <Ic d={P.rewind} size={18}/>
-            </button>
-            <div style={{ textAlign:"center" }}>
-              <p style={{ color:"rgba(255,255,255,.7)", fontSize:13 }}>{(lightbox??0)+1} / {photos.length}</p>
-              <button onClick={() => setDownloaded(d=>({...d,[lightbox??0]:true}))} style={{ marginTop:8, display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"rgba(255,255,255,.85)", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer", margin:"8px auto 0" }}>
-                <Ic d={downloaded[lightbox??0]?P.check:P.down} size={13}/> {downloaded[lightbox??0]?"Downloaded":"Download"}
+      {photos.length > 0 && layoutMode === "slideshow" && (() => {
+        const curPhoto = photos[lightbox ?? 0];
+        const curSrc = imgSrc(curPhoto);
+        return (
+          <div>
+            <div style={{ position:"relative", overflow:"hidden", background:"#111", display:"flex", alignItems:"center", justifyContent:"center", minHeight:360 }}>
+              {curSrc
+                ? <img src={curSrc} alt="" style={{ maxWidth:"100%", maxHeight:"70vh", objectFit:"contain", display:"block" }} loading="lazy"/>
+                : <div style={{ width:"100%", height:480, background:bgFallback(curPhoto) }}/>
+              }
+              <button onClick={e => { e.stopPropagation(); lbPrev(); }} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", zIndex:2 }}>
+                <Ic d={P.rewind} size={18}/>
+              </button>
+              <div style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", zIndex:2 }}>
+                <p style={{ color:"rgba(255,255,255,.9)", fontSize:13, fontWeight:500, background:"rgba(0,0,0,.4)", padding:"4px 12px", borderRadius:20, margin:0 }}>{(lightbox??0)+1} / {photos.length}</p>
+              </div>
+              <button onClick={e => { e.stopPropagation(); lbNext(); }} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)", zIndex:2 }}>
+                <Ic d={P.fwd} size={18}/>
               </button>
             </div>
-            <button onClick={lbNext} style={{ width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-              <Ic d={P.fwd} size={18}/>
-            </button>
+            <div style={{ display:"flex", gap:2, marginTop:2, overflowX:"auto" }}>
+              {photos.map((photo,i) => {
+                const src = imgSrc(photo);
+                const tw = { S:44, M:70, L:100 }[thumbSize] || 70;
+                return (
+                  <div key={i} onClick={() => setLightbox(i)}
+                    style={{ width:tw, flexShrink:0, cursor:"pointer", outline:`2px solid ${(lightbox??0)===i?C.ink:"transparent"}`, outlineOffset:"-2px", transition:"outline .15s", overflow:"hidden" }}>
+                    {src
+                      ? <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                      : <div style={{ width:tw, height:50, background:bgFallback(photo) }}/>
+                    }
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ display:"flex", gap:6, marginTop:10, overflowX:"auto", paddingBottom:4 }}>
-            {photos.map((bg,i) => (
-              <div key={i} onClick={() => setLightbox(i)}
-                style={{ width:60, height:44, borderRadius:7, background:photoBg(bg), flexShrink:0, cursor:"pointer", border:`2px solid ${(lightbox??0)===i?C.ink:"transparent"}`, transition:"border .15s" }}/>
-            ))}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── MAGAZINE layout ── */}
       {photos.length > 0 && layoutMode === "magazine" && (
         <div>
-          <div style={{ borderRadius:14, overflow:"hidden", height:360, background:photoBg(photos[0]), cursor:"pointer", marginBottom:8, position:"relative" }} onClick={() => setLightbox(0)}>
-            <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"24px 24px 20px", background:"linear-gradient(to top, rgba(0,0,0,.6), transparent)" }}>
-              <p style={{ color:"#fff", fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{proj.name}</p>
-              <p style={{ color:"rgba(255,255,255,.7)", fontSize:12, margin:"4px 0 0" }}>{proj.type} · {photos.length} photos</p>
+          <div style={{ overflow:"hidden", cursor:"pointer", marginBottom:2, position:"relative" }} onClick={() => setLightbox(0)}>
+            {imgSrc(photos[0])
+              ? <img src={imgSrc(photos[0])} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+              : <div style={{ width:"100%", height:360, background:bgFallback(photos[0]) }}/>
+            }
+            <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"32px 28px 24px", background:"linear-gradient(to top, rgba(0,0,0,.65), transparent)" }}>
+              <p style={{ color:"#fff", fontSize:20, fontWeight:600, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{proj.name}</p>
+              <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:"4px 0 0" }}>{proj.type} · {photos.length} photos</p>
             </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(cols+1,5)},1fr)`, gap:8 }}>
-            {photos.slice(1).map((bg,i) => (
+          <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
+            {photos.slice(1).map((photo,i) => (
               <div key={i} onClick={() => setLightbox(i+1)}
-                style={{ height:tileH * 0.75, borderRadius:9, background:photoBg(bg), cursor:"pointer", transition:"opacity .15s" }}
-                onMouseEnter={e => e.currentTarget.style.opacity=".8"}
-                onMouseLeave={e => e.currentTarget.style.opacity="1"}/>
+                style={{ overflow:"hidden", cursor:"pointer" }}
+                onMouseEnter={e => e.currentTarget.style.opacity=".82"}
+                onMouseLeave={e => e.currentTarget.style.opacity="1"}>
+                {imgSrc(photo)
+                  ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                  : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+                }
+              </div>
             ))}
           </div>
         </div>
@@ -3472,13 +3509,17 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
 
       {/* ── LIGHTBOX ── */}
       {lightbox !== null && layoutMode !== "slideshow" && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.88)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:500 }}
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.92)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:500 }}
           onClick={() => setLightbox(null)}>
           <button onClick={e => { e.stopPropagation(); lbPrev(); }}
-            style={{ position:"absolute", left:24, width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            style={{ position:"absolute", left:24, width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
             <Ic d={P.rewind} size={20} style={{ color:"#fff" }}/>
           </button>
-          <div onClick={e => e.stopPropagation()} style={{ width:"min(80vw,700px)", height:"min(80vh,520px)", borderRadius:16, background:photoBg(photos[lightbox]), boxShadow:"0 40px 100px rgba(0,0,0,.5)", position:"relative" }}>
+          <div onClick={e => e.stopPropagation()} style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"center", maxWidth:"90vw", maxHeight:"90vh" }}>
+            {imgSrc(photos[lightbox])
+              ? <img src={imgSrc(photos[lightbox])} alt="" style={{ maxWidth:"88vw", maxHeight:"85vh", objectFit:"contain", borderRadius:4, display:"block" }}/>
+              : <div style={{ width:600, height:400, background:bgFallback(photos[lightbox]), borderRadius:12 }}/>
+            }
             <div style={{ position:"absolute", top:12, right:12, display:"flex", gap:8 }}>
               <button onClick={() => setDownloaded(d=>({...d,[lightbox]:true}))}
                 style={{ width:36, height:36, borderRadius:9, background:"rgba(255,255,255,.9)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -3487,12 +3528,12 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               <button onClick={() => setLightbox(null)}
                 style={{ width:36, height:36, borderRadius:9, background:"rgba(255,255,255,.9)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, color:C.ink }}>×</button>
             </div>
-            <div style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", fontSize:12, color:"rgba(255,255,255,.7)", background:"rgba(0,0,0,.4)", padding:"4px 12px", borderRadius:99, backdropFilter:"blur(4px)" }}>
+            <div style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", fontSize:12, color:"rgba(255,255,255,.85)", background:"rgba(0,0,0,.5)", padding:"4px 12px", borderRadius:99, backdropFilter:"blur(4px)" }}>
               {lightbox+1} / {photos.length}
             </div>
           </div>
           <button onClick={e => { e.stopPropagation(); lbNext(); }}
-            style={{ position:"absolute", right:24, width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            style={{ position:"absolute", right:24, width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:2 }}>
             <Ic d={P.fwd} size={20} style={{ color:"#fff" }}/>
           </button>
         </div>
@@ -3559,42 +3600,70 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               {/* Gallery based on style */}
               {portalStyle === "grid" && (
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6 }}>
-                  {photos.map((bg,i) => (
-                    <div key={i} style={{ height:180, borderRadius:8, background:bg, cursor:"pointer", transition:"opacity .15s" }}
-                      onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}/>
+                  {photos.map((photo,i) => (
+                    <div key={i} style={{ borderRadius:8, overflow:"hidden", cursor:"pointer", transition:"opacity .15s" }}
+                      onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                      {imgSrc(photo)
+                        ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                        : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+                      }
+                    </div>
                   ))}
                 </div>
               )}
               {portalStyle === "masonry" && (
-                <div className="gallery-grid">
-                  {photos.map((bg,i) => (
-                    <div key={i} style={{ height:HEIGHTS[i%HEIGHTS.length], borderRadius:10, background:bg, cursor:"pointer", transition:"opacity .15s" }}
-                      onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}/>
+                <div style={{ columns:3, columnGap:6 }}>
+                  {photos.map((photo,i) => (
+                    <div key={i} style={{ breakInside:"avoid", marginBottom:6, borderRadius:10, overflow:"hidden", cursor:"pointer", transition:"opacity .15s" }}
+                      onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                      {imgSrc(photo)
+                        ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                        : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+                      }
+                    </div>
                   ))}
                 </div>
               )}
-              {portalStyle === "slideshow" && (
-                <div style={{ borderRadius:14, overflow:"hidden", height:420, background:photos[0], display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 20px" }}>
-                  <button style={{ width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.8)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <Ic d={P.rewind} size={18}/>
-                  </button>
-                  <p style={{ color:"rgba(255,255,255,.8)", fontSize:13 }}>1 / {photos.length}</p>
-                  <button style={{ width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.8)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <Ic d={P.fwd} size={18}/>
-                  </button>
-                </div>
-              )}
+              {portalStyle === "slideshow" && (() => {
+                const [ssIdx, setSsIdx] = [0, () => {}]; // static preview
+                const curPhoto = photos[0];
+                const curSrc = imgSrc(curPhoto);
+                return (
+                  <div style={{ borderRadius:14, overflow:"hidden", background:"#111", position:"relative", display:"flex", alignItems:"center", justifyContent:"center", minHeight:320 }}>
+                    {curSrc
+                      ? <img src={curSrc} alt="" style={{ maxWidth:"100%", maxHeight:"420px", objectFit:"contain", display:"block" }} loading="lazy"/>
+                      : <div style={{ width:"100%", height:420, background:bgFallback(curPhoto) }}/>
+                    }
+                    <button style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.8)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <Ic d={P.rewind} size={18}/>
+                    </button>
+                    <p style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", color:"rgba(255,255,255,.9)", fontSize:13, background:"rgba(0,0,0,.4)", padding:"4px 12px", borderRadius:20, margin:0 }}>1 / {photos.length}</p>
+                    <button style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", width:44, height:44, borderRadius:11, background:"rgba(255,255,255,.8)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <Ic d={P.fwd} size={18}/>
+                    </button>
+                  </div>
+                );
+              })()}
               {portalStyle === "magazine" && (
                 <div>
-                  <div style={{ borderRadius:14, height:320, background:photos[0], marginBottom:8, position:"relative", overflow:"hidden", cursor:"pointer" }}>
+                  <div style={{ borderRadius:14, overflow:"hidden", marginBottom:8, position:"relative", cursor:"pointer" }}>
+                    {imgSrc(photos[0])
+                      ? <img src={imgSrc(photos[0])} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                      : <div style={{ width:"100%", height:320, background:bgFallback(photos[0]) }}/>
+                    }
                     <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 24px 18px", background:"linear-gradient(to top, rgba(0,0,0,.65), transparent)" }}>
                       <p style={{ color:"#fff", fontSize:22, fontWeight:500, fontFamily:"'Cormorant Garamond',serif", margin:0 }}>{proj.name}</p>
                       <p style={{ color:"rgba(255,255,255,.7)", fontSize:12, margin:"3px 0 0" }}>{photos.length} photos · {proj.type}</p>
                     </div>
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:6 }}>
-                    {photos.slice(1,9).map((bg,i) => (
-                      <div key={i} style={{ height:110, borderRadius:8, background:bg, cursor:"pointer" }}/>
+                    {photos.slice(1,9).map((photo,i) => (
+                      <div key={i} style={{ borderRadius:8, overflow:"hidden", cursor:"pointer" }}>
+                        {imgSrc(photo)
+                          ? <img src={imgSrc(photo)} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>
+                          : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
+                        }
+                      </div>
                     ))}
                   </div>
                   {photos.length > 9 && <p style={{ textAlign:"center", fontSize:12, color:portalDark?"rgba(255,255,255,.4)":"#999", marginTop:12 }}>+{photos.length-9} more photos</p>}
