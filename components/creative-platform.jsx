@@ -24829,7 +24829,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
     if (!userId) return;
     // Merge explicit photos for this project with live state for all other projects
     const mergedGallery = { ..._liveState.current.gallery_photos, [projId]: photos };
-    _saveState(userId, { ..._liveState.current, gallery_photos: mergedGallery });
+    // CRITICAL: update the live ref SYNCHRONOUSLY before the async DB write.
+    // This ensures that if saveNow() is called immediately after (e.g. on logout),
+    // it reads the permanent URLs — not the stale blob URLs that would be stripped.
+    _liveState.current = { ..._liveState.current, gallery_photos: mergedGallery };
+    _saveState(userId, _liveState.current);
   }, [userId]);
 
   // ── Auto-save state changes (debounced) ────────────────────
