@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // ── Supabase Client ──────────────────────────────────────────
@@ -3564,8 +3564,18 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
 };
 
 const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp, onPermanentSave }) => {
-  const photos_init = useRef(false);
-  const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
+  // AppShell owns the photos — no local state here.
+  // This means photos survive tab switching: when this component unmounts and remounts,
+  // galleryPhotosProp (from AppShell's galleryPhotos) is still there unchanged.
+  const photos = galleryPhotosProp || [];
+  // Always-current ref for async upload callbacks (avoids stale closure issues)
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  // Write-through setter — supports both value and functional updater forms.
+  // setGalleryPhotosProp already handles functional updaters (see Projects render).
+  const setPhotos = (updater) => {
+    if (setGalleryPhotosProp) setGalleryPhotosProp(updater);
+  };
   // Photo/video helpers — always show full media, never crop
   const imgSrc     = (p) => typeof p === "string" ? null : (p?.url || null);
   const bgFallback = (p) => typeof p === "string" ? p : C.warm;
@@ -3622,22 +3632,6 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     }
   };
 
-  // Sync from parent when parent loads persisted photos
-  useEffect(() => {
-    if (galleryPhotosProp && galleryPhotosProp.length > 0 && !photos_init.current) {
-      setPhotos_local(galleryPhotosProp);
-      photos_init.current = true;
-    }
-  }, [galleryPhotosProp]);
-
-  // Proxy setter that writes through to AppShell
-  const setPhotos = (updater) => {
-    setPhotos_local(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      if (setGalleryPhotosProp) setGalleryPhotosProp(next);
-      return next;
-    });
-  };
   const favIdxs   = clientFavorites?.[proj.id] || [];
   const flagItems = clientFlags?.[proj.id]     || [];
   const flaggedIdxs = flagItems.map(f => f.photoIndex);
@@ -3651,18 +3645,15 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     fileArr.forEach((file, idx) => {
       const tmpId = `tmp_${Date.now()}_${idx}`;
       const isVideo = file.type.startsWith("video/");
-
-      // Use a blob URL for instant local preview — works for both images and videos,
-      // doesn't load the whole file into memory like base64 would
       const blobUrl = URL.createObjectURL(file);
 
-      // Add to gallery immediately with the local blob preview
+      // Add placeholder to AppShell immediately — blob URL stays valid for this session
+      // so the photo is visible even while uploading and across tab switches.
+      // _saveState strips blob: URLs before DB writes so it won't pollute the DB.
       setPhotos(prev => [...prev, {
-        url: blobUrl,
-        name: file.name,
+        url: blobUrl, name: file.name,
         type: isVideo ? "video" : "image",
-        uploading: true,
-        _tmpId: tmpId,
+        uploading: true, _tmpId: tmpId,
       }]);
 
       // Upload to Supabase Storage
@@ -3672,27 +3663,25 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         if (!error && data) {
           const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
           URL.revokeObjectURL(blobUrl);
-          // Capture the exact computed next-state from the functional updater.
-          // React calls functional updaters synchronously, so capturedNext is
-          // populated immediately — no stale-closure or timing issues.
-          let capturedNext = null;
-          setPhotos(prev => {
-            const next = prev.map(ph =>
-              ph._tmpId === tmpId
-                ? { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" }
-                : ph
-            );
-            capturedNext = next;
-            return next;
-          });
-          // Save immediately with only permanent URLs (no blobs, no uploading flags)
-          if (onPermanentSave && capturedNext) {
-            const permanentOnly = capturedNext.filter(
-              ph => ph.url && !ph.url.startsWith("blob:") && !ph.uploading
-            );
+          const permanentEntry = { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" };
+
+          // Swap blob placeholder with permanent URL in AppShell
+          setPhotos(prev => prev.map(ph => ph._tmpId === tmpId ? permanentEntry : ph));
+
+          // Also save to DB immediately. Use photosRef (always current) to compute
+          // the updated list — functional updaters from Promise callbacks are async
+          // in React 18 so we can't rely on them for the captured value here.
+          const updatedPhotos = photosRef.current.map(ph =>
+            ph._tmpId === tmpId ? permanentEntry : ph
+          );
+          const permanentOnly = updatedPhotos.filter(
+            ph => ph.url && !ph.url.startsWith("blob:") && !ph.uploading
+          );
+          if (onPermanentSave && permanentOnly.length > 0) {
             onPermanentSave(proj.id, permanentOnly);
           }
         } else {
+          // Upload failed — clear uploading flag so user can retry
           setPhotos(prev => prev.map(ph =>
             ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
           ));
@@ -4711,7 +4700,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -4907,7 +4896,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     const TAB_GROUPS = [
       { id:"overview",  label:"Overview",  icon:"folder", sub:null },
       { id:"progress",  label:"Progress",  icon:"check",  sub:null },
-      { id:"work",      label:"Work",      icon:"image",  sub:[
+      { id:"work",      label:"Media",     icon:"image",  sub:[
         { id:"gallery",  label:"Gallery",       icon:"image"  },
         { id:"video",    label:"Video Review",  icon:"film"   },
         ...(isWedding ? [{ id:"planning", label:"Planning", icon:"layers" }] : []),
@@ -24893,7 +24882,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
