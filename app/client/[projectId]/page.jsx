@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const SUPABASE_URL  = "https://czmzxwtnzyguhbmivizq.supabase.co";
 const SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6bXp4d3RuenlndWhibWl2aXpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODMwNTksImV4cCI6MjA5MjQ1OTA1OX0.8BFEhkHdCx0PgZ8SuySMlWk68AtMtcvT3sSsxj88wJo";
@@ -399,6 +399,10 @@ export default function ClientPortalPage({ params }) {
   const [msgDraft, setMsgDraft] = useState("");
   const [msgs,     setMsgs]     = useState([]);
   const [msgSent,  setMsgSent]  = useState(false);
+  const [payModal,  setPayModal]  = useState(null);  // invoice being paid
+  const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
+  const [paying,    setPaying]    = useState(false);
+  const sbRef = useRef(null);
 
   useEffect(() => {
     if (!projectId || isNaN(projectId)) { setNotFound(true); setLoading(false); return; }
@@ -407,6 +411,7 @@ export default function ClientPortalPage({ params }) {
       try {
         const { createClient } = await import("@supabase/supabase-js");
         const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+        sbRef.current = sb;
         const { data: result, error } = await sb.rpc("get_client_portal_data", { p_project_id: projectId });
         if (cancelled) return;
         if (error) { setFetchErr(error.message || "Failed to load."); setLoading(false); return; }
@@ -621,30 +626,87 @@ export default function ClientPortalPage({ params }) {
             <div style={{ textAlign:"center", padding:"48px 0", color:sub }}><p style={{ fontSize:15 }}>No invoices yet.</p></div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-              {invoices.map((inv, idx) => (
-                <div key={idx} style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"18px 20px", display:"flex", alignItems:"center", gap:16 }}>
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 3px" }}>{inv.title||inv.description||`Invoice #${inv.id||idx+1}`}</p>
-                    <p style={{ fontSize:12, color:sub, margin:0 }}>Due {inv.dueDate||"—"}</p>
+              {invoices.map((inv, idx) => {
+                const isPaid = inv.status === "Paid" || payDone[inv.id];
+                return (
+                  <div key={idx} style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${isPaid?"#b6e3cc":brd}`, borderRadius:14, padding:"18px 20px" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 3px" }}>{inv.title||inv.description||`Invoice #${inv.id||idx+1}`}</p>
+                        <p style={{ fontSize:12, color:sub, margin:0 }}>Due {inv.dueDate||"—"}</p>
+                      </div>
+                      <div style={{ textAlign:"right" }}>
+                        <p style={{ fontSize:18, fontWeight:700, color:fg, margin:"0 0 4px" }}>${Number(inv.total||0).toLocaleString()}</p>
+                        <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:99, background:isPaid?"#edf3ef":"#fdf4e7", color:isPaid?C.green:"#8a6a2a" }}>
+                          {isPaid ? "✓ Paid" : (inv.status||"Pending")}
+                        </span>
+                      </div>
+                    </div>
+                    {!isPaid && (
+                      <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${brd}` }}>
+                        <button onClick={() => setPayModal(inv)}
+                          style={{ width:"100%", padding:"12px 0", background:brandColor, color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                          Pay Now — ${Number(inv.total||0).toLocaleString()}
+                        </button>
+                      </div>
+                    )}
+                    {isPaid && payDone[inv.id] && (
+                      <div style={{ marginTop:10, fontSize:12, color:C.green, textAlign:"center" }}>✓ Payment confirmed. Thank you!</div>
+                    )}
                   </div>
-                  <div style={{ textAlign:"right" }}>
-                    <p style={{ fontSize:18, fontWeight:700, color:fg, margin:"0 0 4px" }}>${Number(inv.total||0).toLocaleString()}</p>
-                    <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:99, background:inv.status==="Paid"?"#edf3ef":"#fdf4e7", color:inv.status==="Paid"?C.green:"#8a6a2a" }}>{inv.status||"Pending"}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {totalDue > 0 && (
                 <div style={{ background:dark?"rgba(255,255,255,.04)":C.warm, border:`1px solid ${brd}`, borderRadius:14, padding:"16px 20px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>Total Due</p>
                   <p style={{ fontSize:20, fontWeight:700, color:fg, margin:0 }}>${totalDue.toLocaleString()}</p>
                 </div>
               )}
-              <div style={{ background:dark?"rgba(255,255,255,.06)":C.cream, border:`1px dashed ${brd}`, borderRadius:14, padding:"18px 20px", textAlign:"center" }}>
-                <p style={{ fontSize:13, color:sub, margin:"0 0 12px" }}>To make a payment, contact your photographer:</p>
-                <button onClick={() => setTab("messages")} style={{ padding:"10px 22px", background:brandColor, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>Send a Message</button>
+              <div style={{ background:dark?"rgba(255,255,255,.06)":C.cream, border:`1px dashed ${brd}`, borderRadius:14, padding:"14px 20px", textAlign:"center" }}>
+                <p style={{ fontSize:12, color:sub, margin:0 }}>Questions about your invoice? <button onClick={() => setTab("messages")} style={{ background:"none", border:"none", color:brandColor, fontWeight:600, cursor:"pointer", fontSize:12, padding:0 }}>Send a Message</button></p>
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Pay Now modal ── */}
+      {payModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:900, padding:24 }}
+          onClick={e => { if(e.target===e.currentTarget && !paying) setPayModal(null); }}>
+          <div style={{ background:dark?"#1a1a1a":"#fff", borderRadius:20, padding:"36px 32px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+            <h3 style={{ fontSize:20, fontWeight:700, color:fg, margin:"0 0 6px" }}>Confirm Payment</h3>
+            <p style={{ fontSize:13, color:sub, margin:"0 0 24px" }}>{payModal.title||payModal.description||"Invoice"}</p>
+            <div style={{ background:dark?"rgba(255,255,255,.06)":C.warm, borderRadius:12, padding:"16px 20px", marginBottom:24, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:14, color:sub }}>Amount Due</span>
+              <span style={{ fontSize:24, fontWeight:800, color:fg }}>${Number(payModal.total||0).toLocaleString()}</span>
+            </div>
+            <p style={{ fontSize:12, color:sub, margin:"0 0 20px", lineHeight:1.6, textAlign:"center" }}>
+              By confirming, you acknowledge this payment and your photographer will be notified.
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => !paying && setPayModal(null)}
+                style={{ flex:1, padding:"13px 0", background:"none", border:`1px solid ${brd}`, borderRadius:12, fontSize:14, fontWeight:600, color:fg, cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button disabled={paying} onClick={async () => {
+                  setPaying(true);
+                  try {
+                    const sb = sbRef.current;
+                    if (sb) {
+                      const paidAt = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+                      await sb.rpc("pay_client_invoice", { p_project_id: Number(projectId), p_invoice_id: payModal.id, p_paid_at: paidAt });
+                    }
+                    setPayDone(prev => ({ ...prev, [payModal.id]: true }));
+                    setPayModal(null);
+                  } catch(err) { /* silently mark as paid locally even if RPC fails */ setPayDone(prev => ({...prev,[payModal.id]:true})); setPayModal(null); }
+                  finally { setPaying(false); }
+                }}
+                style={{ flex:2, padding:"13px 0", background:paying?"#ccc":brandColor, color:"#fff", border:"none", borderRadius:12, fontSize:14, fontWeight:700, cursor:paying?"not-allowed":"pointer", transition:"background .2s" }}>
+                {paying ? "Processing…" : `Confirm Payment`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1551,7 +1551,12 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
                     <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{del.title}</p>
                     <p style={{ fontSize:11, color:C.muted, margin:"3px 0 0" }}>Latest: {latestVer.label} · Uploaded {latestVer.uploadedAt}</p>
                   </div>
-                  <Btn variant="secondary" icon="film" style={{ flexShrink:0, fontSize:12 }}>Review</Btn>
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <Btn variant="secondary" icon="film" style={{ fontSize:12 }}>Review</Btn>
+                    <button onClick={e => { e.stopPropagation(); if(window.confirm("Delete this video deliverable?")) setDeliverables(prev => (prev||[]).filter(d => d.id !== del.id)); }}
+                      title="Delete deliverable"
+                      style={{ width:32, height:32, borderRadius:8, background:"none", border:`1px solid ${C.border}`, cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, lineHeight:1, flexShrink:0 }}>×</button>
+                  </div>
                 </div>
                 {/* Version chips */}
                 <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
@@ -3757,6 +3762,8 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
   const [downloaded,   setDownloaded]   = useState({});
   const [dragOver,     setDragOver]     = useState(false);
   const [uploading,    setUploading]    = useState(false);
+  const [photoSelectMode, setPhotoSelectMode] = useState(false);
+  const [selectedPhotoIdxs, setSelectedPhotoIdxs] = useState([]);
 
   // Helper: save a change to delivery object
   const saveDelivery = (changes) => {
@@ -3914,6 +3921,26 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           {delivery?.status === "published" ? "Gallery Live ✓" : "Deliver to Client"}
         </button>
 
+        {photos.length > 0 && (
+          <>
+            <button onClick={() => { setPhotoSelectMode(s => !s); setSelectedPhotoIdxs([]); }}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:photoSelectMode?"#1a1a1a":"#fff", color:photoSelectMode?"#fff":C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", transition:"all .15s" }}>
+              {photoSelectMode ? (selectedPhotoIdxs.length > 0 ? `✓ ${selectedPhotoIdxs.length} selected` : "Selecting…") : "Select"}
+            </button>
+            {photoSelectMode && selectedPhotoIdxs.length > 0 && (
+              <button onClick={() => {
+                  if (!window.confirm(`Delete ${selectedPhotoIdxs.length} photo${selectedPhotoIdxs.length!==1?"s":""}? This cannot be undone.`)) return;
+                  setPhotos(prev => (prev||[]).filter((_, i) => !selectedPhotoIdxs.includes(i)));
+                  setSelectedPhotoIdxs([]);
+                  setPhotoSelectMode(false);
+                }}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:"#e05a5a", color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                Delete {selectedPhotoIdxs.length}
+              </button>
+            )}
+          </>
+        )}
+
         <label style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"#fff", border:`1px dashed ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.muted }}>
           <Ic d={P.upload} size={13}/> {uploading ? "Uploading…" : "Upload Photos"}
           <input id={`gallery-upload-${proj.id}`} type="file" multiple accept="image/*,video/*" style={{ display:"none" }} onChange={e => { addPhotos(e.target.files); e.target.value=""; }}/>
@@ -4019,40 +4046,60 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {/* ── GRID layout — natural aspect ratio, S/M/L controls columns ── */}
       {photos.length > 0 && layoutMode === "grid" && (
         <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
-          {photos.map((photo,i) => (
-            <div key={i} onClick={() => setLightbox(i)}
-              style={{ cursor:"pointer", overflow:"hidden", position:"relative" }}
-              onMouseEnter={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="1"; e.currentTarget.style.opacity=".92"; }}
-              onMouseLeave={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="0"; e.currentTarget.style.opacity="1"; }}>
-              <MediaTile photo={photo}/>
-              <div className="dl-btn" style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s", backdropFilter:"blur(4px)" }}
-                onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}>
-                <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:"#fff" }}/>
+          {photos.map((photo,i) => {
+            const isSel = selectedPhotoIdxs.includes(i);
+            return (
+              <div key={i} onClick={() => photoSelectMode ? setSelectedPhotoIdxs(prev => isSel ? prev.filter(x=>x!==i) : [...prev,i]) : setLightbox(i)}
+                style={{ cursor:"pointer", overflow:"hidden", position:"relative", outline: isSel ? "3px solid #4a7a57" : "none", outlineOffset:"-2px" }}
+                onMouseEnter={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="1"; e.currentTarget.style.opacity=".92"; }}
+                onMouseLeave={e => { const dl=e.currentTarget.querySelector(".dl-btn"); if(dl) dl.style.opacity="0"; e.currentTarget.style.opacity="1"; }}>
+                <MediaTile photo={photo}/>
+                {photoSelectMode && (
+                  <div style={{ position:"absolute", top:6, left:6, width:20, height:20, borderRadius:5, background:isSel?"#4a7a57":"rgba(255,255,255,.85)", border:`2px solid ${isSel?"#4a7a57":"rgba(0,0,0,.3)"}`, display:"flex", alignItems:"center", justifyContent:"center", transition:"all .1s" }}>
+                    {isSel && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                )}
+                {!photoSelectMode && (
+                  <div className="dl-btn" style={{ position:"absolute", bottom:6, right:6, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:"opacity .15s", backdropFilter:"blur(4px)" }}
+                    onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}>
+                    <Ic d={downloaded[i]?P.check:P.down} size={13} style={{ color:"#fff" }}/>
+                  </div>
+                )}
+                {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:photoSelectMode?30:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
+                {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:(favIdxs.includes(i)?29:5)+(photoSelectMode?25:0), width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
               </div>
-              {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
-              {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:favIdxs.includes(i)?29:5, width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* ── MASONRY layout — CSS columns, natural heights, S/M/L controls column count ── */}
       {photos.length > 0 && layoutMode === "masonry" && (
         <div style={{ columns:cols, columnGap:2 }}>
-          {photos.map((photo,i) => (
-            <div key={i} onClick={() => setLightbox(i)}
-              style={{ breakInside:"avoid", display:"block", width:"100%", position:"relative", overflow:"hidden", marginBottom:2, cursor:"pointer" }}
-              onMouseEnter={e => { e.currentTarget.style.opacity=".88"; }}
-              onMouseLeave={e => { e.currentTarget.style.opacity="1"; }}>
-              <MediaTile photo={photo}/>
-              <button onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}
-                style={{ position:"absolute", bottom:7, right:7, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-                <Ic d={downloaded[i]?P.check:P.down} size={12} style={{ color:"#fff" }}/>
-              </button>
-              {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
-              {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:favIdxs.includes(i)?29:5, width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
-            </div>
-          ))}
+          {photos.map((photo,i) => {
+            const isSel = selectedPhotoIdxs.includes(i);
+            return (
+              <div key={i} onClick={() => photoSelectMode ? setSelectedPhotoIdxs(prev => isSel ? prev.filter(x=>x!==i) : [...prev,i]) : setLightbox(i)}
+                style={{ breakInside:"avoid", display:"block", width:"100%", position:"relative", overflow:"hidden", marginBottom:2, cursor:"pointer", outline: isSel ? "3px solid #4a7a57" : "none", outlineOffset:"-2px" }}
+                onMouseEnter={e => { e.currentTarget.style.opacity=".88"; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity="1"; }}>
+                <MediaTile photo={photo}/>
+                {photoSelectMode && (
+                  <div style={{ position:"absolute", top:6, left:6, width:20, height:20, borderRadius:5, background:isSel?"#4a7a57":"rgba(255,255,255,.85)", border:`2px solid ${isSel?"#4a7a57":"rgba(0,0,0,.3)"}`, display:"flex", alignItems:"center", justifyContent:"center", transition:"all .1s" }}>
+                    {isSel && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                )}
+                {!photoSelectMode && (
+                  <button onClick={ev => { ev.stopPropagation(); setDownloaded(d=>({...d,[i]:true})); }}
+                    style={{ position:"absolute", bottom:7, right:7, width:28, height:28, borderRadius:7, background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
+                    <Ic d={downloaded[i]?P.check:P.down} size={12} style={{ color:"#fff" }}/>
+                  </button>
+                )}
+                {favIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:photoSelectMode?30:5, width:20, height:20, borderRadius:"50%", background:"#e87d7d", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.heart} size={9} style={{ color:"#fff" }}/></div>}
+                {flaggedIdxs.includes(i) && <div style={{ position:"absolute", top:5, left:(favIdxs.includes(i)?29:5)+(photoSelectMode?25:0), width:20, height:20, borderRadius:"50%", background:"#e8a030", display:"flex", alignItems:"center", justifyContent:"center" }}><Ic d={P.flag} size={9} style={{ color:"#fff" }}/></div>}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -22026,7 +22073,7 @@ const TIMELINE_ICONS = {
 };
 
 const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProject }) => {
-  const [clients,     setClientsLocal] = useState(clientsProp || CLIENTS_SEED);
+  const clients = clientsProp || CLIENTS_SEED;
   const [selId,       setSelId]        = useState("cl1");
   const [detailTab,   setDetailTab]    = useState("overview"); // overview | projects | financials | timeline
   const [search,      setSearch]       = useState("");
@@ -22053,7 +22100,6 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
   const [newForm,   setNewForm]   = useState(blankClient);
 
   const saveClients = (updated) => {
-    setClientsLocal(updated);
     if (setClientsProp) setClientsProp(updated);
   };
 
