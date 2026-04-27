@@ -3563,7 +3563,7 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
   );
 };
 
-const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp }) => {
+const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp, onPermanentSave }) => {
   const photos_init = useRef(false);
   const [photos,       setPhotos_local] = useState(galleryPhotosProp || []);
   // Photo/video helpers — always show full media, never crop
@@ -3671,16 +3671,16 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       supabase.storage.from("Media").upload(path, file, { upsert: true }).then(({ data, error }) => {
         if (!error && data) {
           const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-          // Swap blob URL → permanent storage URL, release blob memory
           URL.revokeObjectURL(blobUrl);
           setPhotos(prev => prev.map(ph =>
             ph._tmpId === tmpId
               ? { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" }
               : ph
           ));
+          // ↑ state update is async — use setTimeout(0) so React commits it first,
+          // then fire an immediate (non-debounced) save so logout can't race the debounce
+          setTimeout(() => { if (onPermanentSave) onPermanentSave(); }, 0);
         } else {
-          // Upload failed — keep the blob preview but mark not-uploading
-          // (blob URL stays valid for the session; won't persist after reload)
           setPhotos(prev => prev.map(ph =>
             ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
           ));
@@ -5950,7 +5950,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         })()}
 
         {/* ── GALLERY ── */}
-        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))}/>}
+        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))} onPermanentSave={saveNow}/>}
         {/* ── PLANNING ── */}
         {tab === "planning" && <ProjectPlanningTab proj={proj}/>}
 
@@ -18040,9 +18040,11 @@ const Community = ({ commNotifs, setCommNotifs, brandKit, supabaseSession }) => 
 };
 
 // ── Account Settings ──────────────────────────────────────────
-const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit }) => {
+const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit, onBeforeSignOut }) => {
   const sessionUser = supabaseSession?.user;
   const handleSignOut = async () => {
+    // Save all state immediately BEFORE revoking the auth token
+    if (onBeforeSignOut) await onBeforeSignOut();
     if (supabaseClient) await supabaseClient.auth.signOut();
   };
   const [tab,    setTab]    = useState("profile");
@@ -24794,24 +24796,35 @@ function AppShell({ supabaseSession, supabaseClient }) {
     });
   }, [userId]);
 
-  // ── Auto-save state changes ─────────────────────────────────
+  // ── Always-fresh state ref for immediate saves ─────────────
+  // (avoids stale-closure issues when saving from callbacks/logout)
+  const _liveState = useRef({});
+  _liveState.current = {
+    brand_kit:   brandKit,
+    projects:    appProjects,
+    invoices:    appInvoices,
+    crm_clients: crmClients,
+    bookings,
+    cal_events:  calEvents,
+    proposals:   appProposals,
+    packages:    appPackages,
+    sb_frames:   appSbFrames,
+    sb_media:    appSbMedia,
+    gallery_photos:     galleryPhotos,
+    video_deliverables: appVideoDeliverables,
+    video_comments:     appVideoComments,
+  };
+
+  // Immediate (non-debounced) save — call this whenever you can't wait 1.5s
+  const saveNow = useCallback(() => {
+    if (!userId) return Promise.resolve();
+    return _saveState(userId, _liveState.current);
+  }, [userId]);
+
+  // ── Auto-save state changes (debounced) ────────────────────
   useEffect(() => {
     if (!dbLoaded || !userId) return;
-    saveState(userId, {
-      brand_kit:   brandKit,
-      projects:    appProjects,
-      invoices:    appInvoices,
-      crm_clients: crmClients,
-      bookings,
-      cal_events:  calEvents,
-      proposals:   appProposals,
-      packages:    appPackages,
-      sb_frames:   appSbFrames,
-      sb_media:    appSbMedia,
-      gallery_photos:       galleryPhotos,
-      video_deliverables:   appVideoDeliverables,
-      video_comments:       appVideoComments,
-    });
+    saveState(userId, _liveState.current);
   }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, appVideoDeliverables, appVideoComments, dbLoaded]);
 
   useEffect(() => {
@@ -24875,7 +24888,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
     portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
-    account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit}/>,
+    account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
   // ── Client Portal rendering ──
