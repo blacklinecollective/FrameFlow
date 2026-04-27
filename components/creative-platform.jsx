@@ -3743,10 +3743,39 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
           <Ic d={P.eye} size={13}/> Preview
         </button>
 
-        <button onClick={() => setShowDelivery(true)}
-          style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:delivery?.status==="published" ? C.green : C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+        {/* ── Publish button — photographer must confirm gallery before delivery ── */}
+        {photos.length > 0 && (
+          delivery?.published
+            ? (
+              <div style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", background:"#edfaf3", border:`1px solid ${C.green}`, borderRadius:9, fontSize:12, fontWeight:600, color:C.green }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Published
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  const now = new Date().toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+                  saveDelivery({ published: true, publishedAt: now });
+                }}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"#1a1a2e", color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2L12 15M12 2L8 6M12 2L16 6"/><path d="M20 16v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4"/></svg>
+                Publish Gallery
+              </button>
+            )
+        )}
+
+        <button
+          onClick={() => delivery?.published ? setShowDelivery(true) : null}
+          title={delivery?.published ? undefined : "Publish the gallery first before delivering to client"}
+          style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px",
+            background: delivery?.status==="published" ? C.green : (delivery?.published ? C.ink : C.border),
+            color: delivery?.published ? "#fff" : C.muted,
+            border:"none", borderRadius:9, fontSize:12, fontWeight:600,
+            cursor: delivery?.published ? "pointer" : "not-allowed",
+            opacity: delivery?.published ? 1 : 0.6,
+            transition:"all .2s" }}>
           <Ic d={P.send} size={13}/>
-          {delivery?.status === "published" ? "Gallery Live ✓" : "Deliver Gallery"}
+          {delivery?.status === "published" ? "Gallery Live ✓" : "Deliver to Client"}
         </button>
 
         <label style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"#fff", border:`1px dashed ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.muted }}>
@@ -3788,13 +3817,27 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         </div>
       )}
 
+      {/* ── PUBLISHED (not yet delivered) status bar ── */}
+      {delivery?.published && delivery?.status !== "published" && (
+        <div style={{ background:"#edfaf3", border:`1px solid ${C.green}`, borderRadius:14, padding:"12px 18px", marginBottom:16, display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, flexShrink:0 }}/>
+          <span style={{ fontSize:12, fontWeight:600, color:C.green }}>Gallery Published</span>
+          <span style={{ fontSize:12, color:"#3a8a5c" }}>· Ready to deliver to client · {delivery.publishedAt}</span>
+          <div style={{ flex:1 }}/>
+          <button onClick={() => setShowDelivery(true)}
+            style={{ padding:"6px 14px", background:C.green, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            Deliver to Client →
+          </button>
+        </div>
+      )}
+
       {/* ── DELIVERY ANALYTICS BAR ── */}
       {delivery?.status === "published" && (
         <div style={{ background:"#fff", border:`1px solid ${C.border}`, borderRadius:14, padding:"14px 18px", marginBottom:16, display:"flex", alignItems:"center", gap:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, flex:1 }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background:C.green }}/>
             <span style={{ fontSize:12, fontWeight:600, color:C.green }}>Gallery Live</span>
-            <span style={{ fontSize:12, color:C.muted }}>· Published {delivery.publishedAt}</span>
+            <span style={{ fontSize:12, color:C.muted }}>· Delivered {delivery.publishedAt}</span>
           </div>
           {[
             { label:"Views",      val: delivery.views     || 0, icon:P.eye    },
