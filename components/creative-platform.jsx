@@ -1094,8 +1094,9 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
     filter==="all" ? true : filter==="open" ? !c.resolved : filter==="resolved" ? c.resolved : filter==="client" ? c.role==="client" : c.role==="editor"
   ).sort((a,b)=>a.ts-b.ts);
 
+  // Simulated timer — only for seed/demo versions that have no real video URL
   useEffect(() => {
-    if (!playing || !selVer) return;
+    if (!playing || !selVer || selVer.url) return; // skip when real video is loaded
     const t = setInterval(() => {
       setPlayhead(p => {
         const next = p + 1;
@@ -1238,7 +1239,10 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
     setDeliverables(prev => [...(prev||[]), newDel]);
     setAllComments(p => ({ ...p, [verId]: [] }));
     setCreatingDel(false); setShowNewDel(false); setNewDelTitle(""); setNewDelFile(null); setNewDelNotes("");
-    openPlayer(delId);
+    // Navigate directly — openPlayer() would read stale deliverables before the state update commits
+    setSelDelId(delId); setSelVerId(verId); setCmpVerId(null);
+    setPlayhead(0); setCmpPlayhead(0); setPlaying(false);
+    setView("player"); setActiveComment(null); setFilter("all"); setShowAllVers(false);
   };
 
   // Sync real video element with play/pause state
@@ -1277,7 +1281,7 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
         <div style={{ position:"relative", height:isMain&&view==="player"?300:200, background:ver.cover, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}
           onClick={togglePlay}>
           {hasRealVideo ? (
-            <video ref={ref} src={ver.url} preload="metadata"
+            <video key={ver.url} ref={ref} src={ver.url} preload="auto" playsInline
               style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"contain", background:"#000", cursor:"pointer" }}
               onTimeUpdate={e => { const t=Math.floor(e.target.currentTime); setPh(t); if(isMain&&syncPlay&&view==="compare") setCmpPlayhead(t); }}
               onEnded={() => { setIsPlaying(false); if(isMain) setPlaying(false); }}
@@ -1471,12 +1475,19 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
         return (
           <Card key={del.id} style={{ cursor:"pointer", overflow:"hidden", padding:0 }} onClick={()=>openPlayer(del.id)}>
             <div style={{ display:"flex" }}>
-              <div style={{ width:160, background:del.cover, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, position:"relative", minHeight:110 }}>
-                <div style={{ width:44, height:44, borderRadius:"50%", background:"rgba(255,255,255,.18)", border:"2px solid rgba(255,255,255,.35)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.play} size={18} style={{ color:"#fff" }}/>
+              <div style={{ width:160, background:del.cover, flexShrink:0, position:"relative", minHeight:110, overflow:"hidden" }}>
+                {/* Real video thumbnail — first frame via preload="metadata" */}
+                {latestVer.url && (
+                  <video src={latestVer.url} preload="metadata" muted playsInline
+                    style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+                )}
+                {/* Play button overlay */}
+                <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background: latestVer.url ? "rgba(0,0,0,.3)" : "transparent" }}>
+                  <div style={{ width:44, height:44, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"2px solid rgba(255,255,255,.55)", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(2px)" }}>
+                    <Ic d={P.play} size={18} style={{ color:"#fff" }}/>
+                  </div>
                 </div>
-                <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(0,0,0,.6)", color:"#fff", fontSize:10, fontFamily:"monospace", padding:"2px 6px", borderRadius:4 }}>{fmt(latestVer.duration)}</div>
-                {/* Version stack indicator */}
+                <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(0,0,0,.65)", color:"#fff", fontSize:10, fontFamily:"monospace", padding:"2px 6px", borderRadius:4 }}>{fmt(latestVer.duration)}</div>
                 {del.versions.length > 1 && (
                   <div style={{ position:"absolute", top:8, left:8, background:"rgba(0,0,0,.65)", color:"#fff", fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:5 }}>
                     {del.versions.length} versions
@@ -23595,7 +23606,7 @@ const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, se
         <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
           <div style={{ position:"relative", background:cpVer?.cover||"#111" }}>
             {cpVer?.url ? (
-              <video ref={cpVidRef} src={cpVer.url} preload="metadata"
+              <video key={cpVer.url} ref={cpVidRef} src={cpVer.url} preload="auto" playsInline
                 style={{ width:"100%", maxHeight:360, objectFit:"contain", display:"block", background:"#000" }}
                 onTimeUpdate={e=>setCpPH(Math.floor(e.target.currentTime))}
                 onEnded={()=>setCpPlaying(false)}
@@ -23604,6 +23615,14 @@ const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, se
             ) : (
               <div style={{ height:300, background:cpVer?.cover, display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <Ic d={P.film} size={32} style={{ color:"rgba(255,255,255,.3)" }}/>
+              </div>
+            )}
+            {/* Play/pause overlay — pointerEvents:none so clicks fall through to video */}
+            {cpVer?.url && !cpPlaying && (
+              <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none", zIndex:3 }}>
+                <div style={{ width:56, height:56, borderRadius:"50%", background:"rgba(0,0,0,.5)", border:"2px solid rgba(255,255,255,.45)", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
+                  <Ic d={P.play} size={22} style={{ color:"#fff" }}/>
+                </div>
               </div>
             )}
             {cpVer?.url && cpComments.map(c => (
