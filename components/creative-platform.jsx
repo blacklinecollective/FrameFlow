@@ -12,15 +12,28 @@ function debounce(fn, ms) {
 }
 const _saveState = async (userId, patch) => {
   if (!userId) return;
-  // Strip any base64 data-URLs from gallery_photos before saving to DB
-  // (base64 blobs are huge and break the Supabase row size limit)
   let cleanPatch = patch;
+  // Strip base64/blob URLs from gallery_photos (too large for DB row)
   if (patch.gallery_photos) {
     const cleanPhotos = {};
     for (const [projId, arr] of Object.entries(patch.gallery_photos)) {
       cleanPhotos[projId] = (arr || []).filter(ph => ph.url && !ph.url.startsWith("data:") && !ph.url.startsWith("blob:") && !ph.uploading);
     }
-    cleanPatch = { ...patch, gallery_photos: cleanPhotos };
+    cleanPatch = { ...cleanPatch, gallery_photos: cleanPhotos };
+  }
+  // Strip blob URLs from video_deliverables (blob: URLs are session-only, not cross-session)
+  if (patch.video_deliverables) {
+    const cleanVids = {};
+    for (const [projId, dels] of Object.entries(patch.video_deliverables)) {
+      cleanVids[projId] = (dels || []).map(del => ({
+        ...del,
+        versions: (del.versions || []).map(v => ({
+          ...v,
+          url: (v.url && !v.url.startsWith("blob:")) ? v.url : null,
+        })),
+      }));
+    }
+    cleanPatch = { ...cleanPatch, video_deliverables: cleanVids };
   }
   await supabase.from("app_state").upsert(
     { user_id: userId, ...cleanPatch, updated_at: new Date().toISOString() },
@@ -1162,87 +1175,110 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
 
   // Upload a new version of an existing deliverable
   const doUpload = async () => {
-    if (!selDel) return;
+    if (!selDel || !uploadFile) return;
     setUploading(true);
-    let videoUrl = null;
+
+    // 1. Create local blob URL for immediate playback (don't revoke yet)
+    const localUrl = URL.createObjectURL(uploadFile);
     let duration = selDel.versions[selDel.versions.length-1]?.duration || 120;
-    if (uploadFile) {
-      // Get real duration from the file
-      try {
-        const blobUrl = URL.createObjectURL(uploadFile);
-        await new Promise(res => {
-          const v = document.createElement("video");
-          v.src = blobUrl;
-          v.onloadedmetadata = () => { duration = Math.round(v.duration); URL.revokeObjectURL(blobUrl); res(); };
-          v.onerror = res;
-        });
-      } catch(_) {}
-      // Upload to Supabase Storage
-      const ext = uploadFile.name.split(".").pop().toLowerCase();
-      const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { data, error } = await supabase.storage.from("Media").upload(path, uploadFile, { upsert: true });
-      if (!error && data) {
-        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-        videoUrl = publicUrl;
-      }
-    }
+
+    // 2. Get real duration (reuse localUrl — DON'T revoke it here)
+    try {
+      await new Promise(resolve => {
+        const v = document.createElement("video");
+        v.src = localUrl;
+        v.onloadedmetadata = () => { duration = Math.round(v.duration) || duration; resolve(); };
+        v.onerror = () => resolve();
+        setTimeout(resolve, 4000);
+      });
+    } catch(_) {}
+
+    // 3. Add version immediately with blob URL so playback works right away
     const nextN = selDel.versions.length + 1;
     const newVerId = `${selDel.id}V${nextN}`;
     const newVer = {
       id: newVerId, label: `v${nextN}`, round: nextN, duration,
-      cover: selDel.versions[0].cover, url: videoUrl,
+      cover: selDel.versions[0].cover, url: localUrl,
       uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
       notes: uploadNotes || `Version ${nextN} — new revision`,
     };
     setDeliverables(prev => (prev||[]).map(d => d.id===selDelId ? {...d, versions:[...d.versions, newVer]} : d));
     setAllComments(p => ({ ...p, [newVerId]: [] }));
-    setUploading(false); setUploadDone(true); setUploadFile(null);
+    setUploading(false); setUploadDone(true);
+    const fileToUpload = uploadFile;
+    setUploadFile(null);
     setTimeout(() => { setUploadDone(false); setShowUpload(false); setUploadNotes(""); setCmpVerId(selVerId); switchVersion(newVerId); }, 1600);
+
+    // 4. Upload to Supabase in background — swap URL when done
+    const ext = fileToUpload.name.split(".").pop().toLowerCase();
+    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    supabase.storage.from("Media").upload(path, fileToUpload, { upsert: true }).then(({ data, error }) => {
+      if (!error && data) {
+        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+        setDeliverables(prev => (prev||[]).map(d =>
+          d.id === selDelId ? { ...d, versions: d.versions.map(v => v.id === newVerId ? { ...v, url: publicUrl } : v) } : d
+        ));
+        URL.revokeObjectURL(localUrl);
+      }
+    });
   };
 
   // Create a brand-new deliverable from list view
   const createDeliverable = async () => {
-    if (!newDelTitle.trim()) return;
+    if (!newDelTitle.trim() || !newDelFile) return;
     setCreatingDel(true);
-    let videoUrl = null;
+
+    // 1. Create local blob URL immediately — stays alive for this session
+    const localUrl = URL.createObjectURL(newDelFile);
     let duration = 120;
-    const COVERS = ["linear-gradient(135deg,#1a1a2e,#16213e)","linear-gradient(135deg,#2d1b3d,#1a0f2e)","linear-gradient(135deg,#1a2e1a,#0f1f0f)","linear-gradient(135deg,#2e1a1a,#1f0f0f)","linear-gradient(135deg,#1a1f2e,#0f1520)"];
-    const cover = COVERS[deliverables.length % COVERS.length];
-    if (newDelFile) {
-      try {
-        const blobUrl = URL.createObjectURL(newDelFile);
-        await new Promise(res => {
-          const v = document.createElement("video");
-          v.src = blobUrl;
-          v.onloadedmetadata = () => { duration = Math.round(v.duration); URL.revokeObjectURL(blobUrl); res(); };
-          v.onerror = res;
-        });
-      } catch(_) {}
-      const ext = newDelFile.name.split(".").pop().toLowerCase();
-      const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { data, error } = await supabase.storage.from("Media").upload(path, newDelFile, { upsert: true });
-      if (!error && data) {
-        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-        videoUrl = publicUrl;
-      }
-    }
+
+    // 2. Get duration (reuse localUrl — DON'T revoke it here)
+    try {
+      await new Promise(resolve => {
+        const v = document.createElement("video");
+        v.src = localUrl;
+        v.onloadedmetadata = () => { duration = Math.round(v.duration) || 120; resolve(); };
+        v.onerror = () => resolve();
+        setTimeout(resolve, 4000);
+      });
+    } catch(_) {}
+
+    // 3. Create deliverable instantly with blob URL — works right away in browser
+    const cover = "#111";
     const delId = `DEL_${proj.id}_${Date.now()}`;
     const verId = `${delId}V1`;
     const newDel = {
       id: delId, title: newDelTitle.trim(), cover,
       versions: [{
-        id: verId, label: "v1", round: 1, duration, cover, url: videoUrl,
+        id: verId, label: "v1", round: 1, duration, cover, url: localUrl,
         uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
         notes: newDelNotes.trim() || "Initial cut — ready for review",
       }],
     };
     setDeliverables(prev => [...(prev||[]), newDel]);
     setAllComments(p => ({ ...p, [verId]: [] }));
+    const fileToUpload = newDelFile;
     setCreatingDel(false); setShowNewDel(false); setNewDelTitle(""); setNewDelFile(null); setNewDelNotes("");
-    // Navigate directly — openPlayer() would read stale deliverables before the state update commits
+
+    // 4. Navigate immediately (don't wait for upload)
     setSelDelId(delId); setSelVerId(verId); setCmpVerId(null);
     setPlayhead(0); setCmpPlayhead(0); setPlaying(false);
     setView("player"); setActiveComment(null); setFilter("all"); setShowAllVers(false);
+
+    // 5. Upload to Supabase in background — swap blob URL → permanent URL when done
+    const ext = fileToUpload.name.split(".").pop().toLowerCase();
+    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    supabase.storage.from("Media").upload(path, fileToUpload, { upsert: true }).then(({ data, error }) => {
+      if (!error && data) {
+        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+        setDeliverables(prev => (prev||[]).map(d =>
+          d.id === delId ? { ...d, versions: d.versions.map(v => v.id === verId ? { ...v, url: publicUrl } : v) } : d
+        ));
+        URL.revokeObjectURL(localUrl); // free memory once Supabase URL is live
+      }
+      // If upload fails: localUrl remains valid for current session; next session will show no video
+      // (blob URLs are stripped from DB saves by _saveState sanitizer)
+    });
   };
 
   // Sync real video element with play/pause state
@@ -1278,11 +1314,11 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
     return (
       <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
         {/* Video area */}
-        <div style={{ position:"relative", height:isMain&&view==="player"?300:200, background:ver.cover, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}
+        <div style={{ position:"relative", height:isMain&&view==="player"?320:200, background: hasRealVideo ? "#000" : (ver.cover||"#111"), display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", cursor:"pointer" }}
           onClick={togglePlay}>
           {hasRealVideo ? (
             <video key={ver.url} ref={ref} src={ver.url} preload="auto" playsInline
-              style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"contain", background:"#000", cursor:"pointer" }}
+              style={{ position:"absolute", top:0, left:0, right:0, bottom:0, width:"100%", height:"100%", objectFit:"contain", background:"#000", cursor:"pointer" }}
               onTimeUpdate={e => { const t=Math.floor(e.target.currentTime); setPh(t); if(isMain&&syncPlay&&view==="compare") setCmpPlayhead(t); }}
               onEnded={() => { setIsPlaying(false); if(isMain) setPlaying(false); }}
               onClick={e => { e.stopPropagation(); togglePlay(); }}
@@ -1475,21 +1511,21 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
         return (
           <Card key={del.id} style={{ cursor:"pointer", overflow:"hidden", padding:0 }} onClick={()=>openPlayer(del.id)}>
             <div style={{ display:"flex" }}>
-              <div style={{ width:160, background:del.cover, flexShrink:0, position:"relative", minHeight:110, overflow:"hidden" }}>
-                {/* Real video thumbnail — first frame via preload="metadata" */}
+              <div style={{ width:160, background: latestVer.url ? "#000" : del.cover, flexShrink:0, position:"relative", minHeight:110, overflow:"hidden" }}>
+                {/* Video thumbnail — shows first frame via preload="metadata" */}
                 {latestVer.url && (
                   <video src={latestVer.url} preload="metadata" muted playsInline
-                    style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+                    style={{ position:"absolute", top:0, left:0, right:0, bottom:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
                 )}
-                {/* Play button overlay */}
-                <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background: latestVer.url ? "rgba(0,0,0,.3)" : "transparent" }}>
-                  <div style={{ width:44, height:44, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"2px solid rgba(255,255,255,.55)", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(2px)" }}>
+                {/* Dark overlay + play icon */}
+                <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.35)" }}>
+                  <div style={{ width:44, height:44, borderRadius:"50%", background:"rgba(0,0,0,.6)", border:"2px solid rgba(255,255,255,.6)", display:"flex", alignItems:"center", justifyContent:"center" }}>
                     <Ic d={P.play} size={18} style={{ color:"#fff" }}/>
                   </div>
                 </div>
-                <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(0,0,0,.65)", color:"#fff", fontSize:10, fontFamily:"monospace", padding:"2px 6px", borderRadius:4 }}>{fmt(latestVer.duration)}</div>
+                <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(0,0,0,.7)", color:"#fff", fontSize:10, fontFamily:"monospace", padding:"2px 6px", borderRadius:4 }}>{fmt(latestVer.duration)}</div>
                 {del.versions.length > 1 && (
-                  <div style={{ position:"absolute", top:8, left:8, background:"rgba(0,0,0,.65)", color:"#fff", fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:5 }}>
+                  <div style={{ position:"absolute", top:8, left:8, background:"rgba(0,0,0,.7)", color:"#fff", fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:5 }}>
                     {del.versions.length} versions
                   </div>
                 )}
@@ -23554,13 +23590,13 @@ const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, se
         return (
           <div key={del.id} onClick={() => { setCpSelId(del.id); setCpSelVId(latest.id); setCpPH(0); setCpPlaying(false); }}
             style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", cursor:"pointer", marginBottom:14, display:"flex" }}>
-            <div style={{ width:150, background:del.cover, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, position:"relative", minHeight:100 }}>
-              {latest.url
-                ? <video src={latest.url} preload="metadata" muted style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
-                : <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(255,255,255,.18)",border:"2px solid rgba(255,255,255,.35)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
-              }
-              <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
+            <div style={{ width:150, background: latest.url ? "#000" : (del.cover||"#111"), flexShrink:0, position:"relative", minHeight:100, overflow:"hidden" }}>
+              {latest.url && (
+                <video src={latest.url} preload="metadata" muted playsInline
+                  style={{ position:"absolute", top:0, left:0, right:0, bottom:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+              )}
+              <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.35)" }}>
+                <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.55)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
               </div>
             </div>
             <div style={{ padding:18, flex:1 }}>
@@ -23604,17 +23640,18 @@ const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, se
       <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
         {/* Player */}
         <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
-          <div style={{ position:"relative", background:cpVer?.cover||"#111" }}>
+          <div style={{ position:"relative", background: cpVer?.url ? "#000" : (cpVer?.cover||"#111"), minHeight:280, display:"flex", alignItems:"center", justifyContent:"center" }}>
             {cpVer?.url ? (
               <video key={cpVer.url} ref={cpVidRef} src={cpVer.url} preload="auto" playsInline
-                style={{ width:"100%", maxHeight:360, objectFit:"contain", display:"block", background:"#000" }}
+                style={{ width:"100%", maxHeight:380, objectFit:"contain", display:"block", background:"#000", cursor:"pointer" }}
                 onTimeUpdate={e=>setCpPH(Math.floor(e.target.currentTime))}
                 onEnded={()=>setCpPlaying(false)}
                 onClick={()=>{ if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}; setCpPlaying(p=>!p); }}
               />
             ) : (
-              <div style={{ height:300, background:cpVer?.cover, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
                 <Ic d={P.film} size={32} style={{ color:"rgba(255,255,255,.3)" }}/>
+                <p style={{ color:"rgba(255,255,255,.3)", fontSize:12, marginTop:10 }}>No video uploaded yet</p>
               </div>
             )}
             {/* Play/pause overlay — pointerEvents:none so clicks fall through to video */}
