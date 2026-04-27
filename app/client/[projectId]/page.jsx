@@ -1,13 +1,7 @@
 "use client";
-import { useState, useEffect } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useState, useEffect, useRef } from "react";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
-
-// ── Minimal colour tokens (mirrors creative-platform) ──
+// ── Minimal colour tokens ─────────────────────────────
 const C = {
   ink: "#1a1a1a", muted: "#888", border: "#e8e4df",
   warm: "#f5f2ee", cream: "#faf9f7", green: "#4a7a57",
@@ -86,12 +80,16 @@ function PhotoTile({ photo, onClick, isFav, onFav }) {
 
 // ── Main Client Portal Page ───────────────────────────
 export default function ClientPortalPage({ params }) {
-  const projectId = Number(params.projectId);
+  // Safely parse projectId — guard against non-numeric slugs
+  const projectId = params?.projectId ? Number(params.projectId) : null;
+
   const [loading,   setLoading]   = useState(true);
   const [notFound,  setNotFound]  = useState(false);
   const [expired,   setExpired]   = useState(false);
+  const [notReady,  setNotReady]  = useState(false); // published === false
+  const [fetchErr,  setFetchErr]  = useState(null);
   const [unlocked,  setUnlocked]  = useState(false);
-  const [data,      setData]      = useState(null); // { project, delivery, photos, brandKit, invoices, videoDeliverables }
+  const [data,      setData]      = useState(null);
   const [tab,       setTab]       = useState("gallery");
   const [favs,      setFavs]      = useState([]);
   const [lightbox,  setLightbox]  = useState(null);
@@ -100,25 +98,77 @@ export default function ClientPortalPage({ params }) {
   const [msgSent,   setMsgSent]   = useState(false);
 
   useEffect(() => {
-    (async () => {
-      const { data: result, error } = await supabase.rpc("get_client_portal_data", { p_project_id: projectId });
-      if (error || !result) { setNotFound(true); setLoading(false); return; }
-
-      // Check expiry
-      const delivery = result.delivery || {};
-      if (delivery.expiryEnabled && delivery.expiryDate) {
-        const exp = new Date(delivery.expiryDate);
-        if (exp < new Date()) { setExpired(true); setLoading(false); return; }
-      }
-
-      // Auto-unlock if no PIN
-      if (!delivery.pinEnabled) setUnlocked(true);
-
-      setData(result);
+    if (!projectId || isNaN(projectId)) {
+      setNotFound(true);
       setLoading(false);
-    })();
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        // Lazy-init Supabase inside the effect so module-level init never runs on the server
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        );
+
+        const { data: result, error } = await supabase.rpc("get_client_portal_data", {
+          p_project_id: projectId,
+        });
+
+        if (cancelled) return;
+
+        if (error) {
+          console.error("[portal] RPC error:", error);
+          setFetchErr(error.message || "Failed to load gallery.");
+          setLoading(false);
+          return;
+        }
+        if (!result) {
+          setNotFound(true);
+          setLoading(false);
+          return;
+        }
+
+        const delivery = result.delivery || {};
+
+        // Gallery not published yet
+        if (!delivery.published) {
+          setNotReady(true);
+          setLoading(false);
+          return;
+        }
+
+        // Check expiry
+        if (delivery.expiryEnabled && delivery.expiryDate) {
+          if (new Date(delivery.expiryDate) < new Date()) {
+            setExpired(true);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Auto-unlock if no PIN
+        if (!delivery.pinEnabled) setUnlocked(true);
+
+        setData(result);
+        setLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[portal] Unexpected error:", err);
+        setFetchErr(err?.message || "Something went wrong loading the gallery.");
+        setLoading(false);
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
   }, [projectId]);
 
+  // ── Loading ──────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream }}>
       <div style={{ textAlign:"center" }}>
@@ -129,15 +179,43 @@ export default function ClientPortalPage({ params }) {
     </div>
   );
 
+  // ── Not found ────────────────────────────────────────
   if (notFound) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream, padding:24 }}>
       <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>🔍</div>
         <p style={{ fontSize:20, fontWeight:700, color:C.ink, marginBottom:8 }}>Gallery Not Found</p>
         <p style={{ fontSize:13, color:C.muted }}>This link may be invalid or the gallery has been removed.</p>
       </div>
     </div>
   );
 
+  // ── Not published yet ────────────────────────────────
+  if (notReady) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream, padding:24 }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>📷</div>
+        <p style={{ fontSize:20, fontWeight:700, color:C.ink, marginBottom:8 }}>Gallery Coming Soon</p>
+        <p style={{ fontSize:13, color:C.muted }}>Your photographer is still preparing your gallery. Check back soon!</p>
+      </div>
+    </div>
+  );
+
+  // ── Fetch error ──────────────────────────────────────
+  if (fetchErr) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream, padding:24 }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:40, marginBottom:16 }}>⚠️</div>
+        <p style={{ fontSize:20, fontWeight:700, color:C.ink, marginBottom:8 }}>Unable to Load Gallery</p>
+        <p style={{ fontSize:13, color:C.muted, maxWidth:320 }}>{fetchErr}</p>
+        <button onClick={() => window.location.reload()} style={{ marginTop:20, padding:"10px 22px", background:C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          Try Again
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Expired ──────────────────────────────────────────
   if (expired) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream, padding:24 }}>
       <div style={{ textAlign:"center" }}>
@@ -151,7 +229,7 @@ export default function ClientPortalPage({ params }) {
   const { delivery = {}, project = {}, photos: rawPhotos, brandKit = {}, invoices = [] } = data || {};
   const photos = Array.isArray(rawPhotos) ? rawPhotos : [];
 
-  // Show PIN gate
+  // ── PIN gate ─────────────────────────────────────────
   if (!unlocked && delivery.pinEnabled) {
     return <PinGate pin={delivery.pin} onUnlock={() => setUnlocked(true)}/>;
   }
@@ -171,13 +249,11 @@ export default function ClientPortalPage({ params }) {
     { id:"messages", label:"Messages", icon:"💬" },
   ];
 
-  const checklist = (project.checklist || []);
+  const checklist = project.checklist || [];
   const done = checklist.filter(c => c.checked).length;
 
-  // Invoice helpers
-  const openInvoices  = invoices.filter(i => i.status !== "Paid");
-  const paidInvoices  = invoices.filter(i => i.status === "Paid");
-  const totalDue      = openInvoices.reduce((s,i) => s + (Number(i.total)||0), 0);
+  const openInvoices = invoices.filter(i => i.status !== "Paid");
+  const totalDue     = openInvoices.reduce((s, i) => s + (Number(i.total)||0), 0);
 
   const sendMsg = () => {
     if (!msgDraft.trim()) return;
@@ -213,19 +289,27 @@ export default function ClientPortalPage({ params }) {
       {/* ── Gallery tab ── */}
       {tab === "gallery" && (
         <div style={{ maxWidth:1100, margin:"0 auto", padding:"32px 24px" }}>
-          {/* Header */}
           <div style={{ textAlign:"center", marginBottom:36 }}>
             <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:3, margin:"0 0 10px" }}>
               {project.type} · {new Date().toLocaleDateString("en-US",{year:"numeric",month:"long"})}
             </p>
             <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 12px", letterSpacing:-.5 }}>
-              {delivery.galleryTitle || project.name + " — Your Gallery"}
+              {delivery.galleryTitle || (project.name ? `${project.name} — Your Gallery` : "Your Gallery")}
             </h1>
             {delivery.message && (
               <p style={{ fontSize:14, color:sub, maxWidth:540, margin:"0 auto 24px", lineHeight:1.7 }}>{delivery.message}</p>
             )}
             {delivery.downloadEnabled && photos.length > 0 && (
-              <a href="#download-all" onClick={e => { e.preventDefault(); photos.forEach((ph, i) => { const a = document.createElement("a"); a.href = typeof ph==="string"?ph:ph.url; a.download = ph.name||`photo-${i+1}`; a.target="_blank"; a.click(); }); }}
+              <a href="#download-all" onClick={e => {
+                  e.preventDefault();
+                  photos.forEach((ph, idx) => {
+                    const a = document.createElement("a");
+                    a.href = typeof ph === "string" ? ph : ph.url;
+                    a.download = ph.name || `photo-${idx+1}`;
+                    a.target = "_blank";
+                    a.click();
+                  });
+                }}
                 style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"11px 24px", background:brandColor, color:"#fff", borderRadius:12, fontSize:13, fontWeight:600, cursor:"pointer", textDecoration:"none" }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 Download All ({photos.length} {photos.length===1?"photo":"photos"})
@@ -236,18 +320,17 @@ export default function ClientPortalPage({ params }) {
             )}
           </div>
 
-          {/* Gallery grid */}
           {photos.length === 0 ? (
             <div style={{ textAlign:"center", padding:"60px 0", color:sub }}>
               <p style={{ fontSize:16 }}>Your photos will appear here once ready.</p>
             </div>
           ) : (
             <div style={{ columns:3, columnGap:6 }}>
-              {photos.map((photo, i) => (
-                <PhotoTile key={i} photo={photo}
-                  isFav={favs.includes(i)}
-                  onFav={() => setFavs(prev => prev.includes(i) ? prev.filter(x=>x!==i) : [...prev, i])}
-                  onClick={() => setLightbox(i)}/>
+              {photos.map((photo, idx) => (
+                <PhotoTile key={idx} photo={photo}
+                  isFav={favs.includes(idx)}
+                  onFav={() => setFavs(prev => prev.includes(idx) ? prev.filter(x=>x!==idx) : [...prev, idx])}
+                  onClick={() => setLightbox(idx)}/>
               ))}
             </div>
           )}
@@ -266,10 +349,10 @@ export default function ClientPortalPage({ params }) {
             </div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-              {invoices.map((inv, i) => (
-                <div key={i} style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"18px 20px", display:"flex", alignItems:"center", gap:16 }}>
+              {invoices.map((inv, idx) => (
+                <div key={idx} style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"18px 20px", display:"flex", alignItems:"center", gap:16 }}>
                   <div style={{ flex:1 }}>
-                    <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 3px" }}>{inv.title || inv.description || `Invoice #${inv.id||i+1}`}</p>
+                    <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 3px" }}>{inv.title || inv.description || `Invoice #${inv.id||idx+1}`}</p>
                     <p style={{ fontSize:12, color:sub, margin:0 }}>Due {inv.dueDate || "—"}</p>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -282,14 +365,12 @@ export default function ClientPortalPage({ params }) {
                   </div>
                 </div>
               ))}
-
               {totalDue > 0 && (
                 <div style={{ background: dark?"rgba(255,255,255,.04)":C.warm, border:`1px solid ${brd}`, borderRadius:14, padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                   <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>Total Due</p>
                   <p style={{ fontSize:20, fontWeight:700, color:fg, margin:0 }}>${totalDue.toLocaleString()}</p>
                 </div>
               )}
-
               <div style={{ background:dark?"rgba(255,255,255,.06)":C.cream, border:`1px dashed ${brd}`, borderRadius:14, padding:"18px 20px", textAlign:"center" }}>
                 <p style={{ fontSize:13, color:sub, margin:"0 0 12px" }}>To make a payment, contact your photographer:</p>
                 <button onClick={() => setTab("messages")}
@@ -314,15 +395,13 @@ export default function ClientPortalPage({ params }) {
             </div>
           ) : (
             <>
-              {/* Progress bar */}
               <div style={{ background:dark?"rgba(255,255,255,.1)":C.border, borderRadius:99, height:6, marginBottom:24, overflow:"hidden" }}>
                 <div style={{ height:"100%", width:`${Math.round((done/checklist.length)*100)}%`, background:brandColor, borderRadius:99, transition:"width .4s" }}/>
               </div>
               <p style={{ fontSize:13, color:sub, margin:"0 0 20px" }}>{done} of {checklist.length} steps complete</p>
-
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                {checklist.map((item, i) => (
-                  <div key={i} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px",
+                {checklist.map((item, idx) => (
+                  <div key={idx} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px",
                     background: item.checked ? (dark?"rgba(74,122,87,.15)":"#edf3ef") : (dark?"rgba(255,255,255,.04)":"#fff"),
                     border:`1px solid ${item.checked?(dark?"rgba(74,122,87,.3)":C.green):brd}`,
                     borderRadius:12, transition:"all .2s" }}>
@@ -355,8 +434,8 @@ export default function ClientPortalPage({ params }) {
                 <p style={{ fontSize:14 }}>No messages yet. Say hello!</p>
               </div>
             )}
-            {msgs.map((m, i) => (
-              <div key={i} style={{ display:"flex", justifyContent: m.from==="client" ? "flex-end" : "flex-start" }}>
+            {msgs.map((m, idx) => (
+              <div key={idx} style={{ display:"flex", justifyContent: m.from==="client" ? "flex-end" : "flex-start" }}>
                 <div style={{ maxWidth:"75%", padding:"10px 14px", borderRadius:14,
                   background: m.from==="client" ? brandColor : (dark?"rgba(255,255,255,.08)":C.warm),
                   color: m.from==="client" ? "#fff" : fg }}>
@@ -384,20 +463,20 @@ export default function ClientPortalPage({ params }) {
       {lightbox !== null && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.92)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999 }}
           onClick={() => setLightbox(null)}>
-          <button onClick={e => { e.stopPropagation(); setLightbox(i => (i-1+photos.length)%photos.length); }}
+          <button onClick={e => { e.stopPropagation(); setLightbox(prev => (prev - 1 + photos.length) % photos.length); }}
             style={{ position:"absolute", left:20, width:44, height:44, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", color:"#fff", fontSize:22, display:"flex", alignItems:"center", justifyContent:"center" }}>‹</button>
           <div onClick={e => e.stopPropagation()} style={{ maxWidth:"90vw", maxHeight:"90vh" }}>
             {(() => {
               const ph = photos[lightbox];
-              const src = typeof ph==="string" ? ph : ph?.url;
-              const isVid = ph?.type==="video" || /\.(mp4|mov|webm)(\?|$)/i.test(src||"");
+              const src = typeof ph === "string" ? ph : ph?.url;
+              const isVid = ph?.type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(src||"");
               return isVid
                 ? <video src={src} controls autoPlay style={{ maxWidth:"88vw", maxHeight:"85vh", borderRadius:4 }}/>
                 : <img src={src} alt="" style={{ maxWidth:"88vw", maxHeight:"85vh", objectFit:"contain", borderRadius:4, display:"block" }}/>;
             })()}
             <p style={{ color:"rgba(255,255,255,.7)", fontSize:12, textAlign:"center", marginTop:10 }}>{lightbox+1} / {photos.length}</p>
           </div>
-          <button onClick={e => { e.stopPropagation(); setLightbox(i => (i+1)%photos.length); }}
+          <button onClick={e => { e.stopPropagation(); setLightbox(prev => (prev + 1) % photos.length); }}
             style={{ position:"absolute", right:20, width:44, height:44, borderRadius:12, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", color:"#fff", fontSize:22, display:"flex", alignItems:"center", justifyContent:"center" }}>›</button>
         </div>
       )}
