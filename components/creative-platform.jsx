@@ -23497,6 +23497,189 @@ const ClientDashboard = ({
   );
 };
 
+// ── Client Portal — Video Review Tab (extracted to obey Rules of Hooks) ──────
+const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+  const vDelivs  = (appVideoDeliverables || {})[proj.id] || [];
+  const vCmts    = appVideoComments || {};
+  const setVCmts = (upd) => setAppVideoComments && setAppVideoComments(prev => typeof upd==="function" ? upd(prev||{}) : upd);
+  const fmt2     = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const [cpSelId,  setCpSelId]  = useState(null);
+  const [cpSelVId, setCpSelVId] = useState(null);
+  const [cpPH,     setCpPH]     = useState(0);
+  const [cpPlaying,setCpPlaying]= useState(false);
+  const [cpText,   setCpText]   = useState("");
+  const cpVidRef                = useRef(null);
+  const cpDel      = vDelivs.find(d=>d.id===cpSelId);
+  const cpVer      = cpDel?.versions?.find(v=>v.id===cpSelVId);
+  const cpComments = cpSelVId ? (vCmts[cpSelVId]||[]) : [];
+  const cpDur      = cpVer?.duration || 1;
+
+  const addClientComment = () => {
+    if (!cpText.trim() || !cpSelVId) return;
+    if (cpVidRef.current) setCpPH(Math.floor(cpVidRef.current.currentTime));
+    const ts = cpVidRef.current ? Math.floor(cpVidRef.current.currentTime) : cpPH;
+    const c = { id:Date.now(), ts, author:proj.client||"Client", avatar:(proj.client||"C")[0].toUpperCase(), role:"client", text:cpText.trim(), resolved:false, replies:[], time:"Now" };
+    setVCmts(p => ({ ...p, [cpSelVId]: [...(p[cpSelVId]||[]), c] }));
+    setCpText("");
+  };
+
+  // ── LIST VIEW ──────────────────────────────────────────────────────────────
+  if (!cpSelId || !cpDel) return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Video Review</h2>
+        <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review your videos and leave timestamped notes for the studio</p>
+      </div>
+      {vDelivs.length === 0 ? (
+        <div style={{ textAlign:"center", padding:60, background:"#fff", borderRadius:16, border:`1px solid ${C.border}` }}>
+          <Ic d={P.film} size={28} style={{ color:C.muted, display:"block", margin:"0 auto 14px" }}/>
+          <p style={{ fontSize:15, fontWeight:600, color:C.ink, marginBottom:6 }}>No videos yet</p>
+          <p style={{ fontSize:13, color:C.muted }}>Your studio will upload your video here once it's ready for review.</p>
+        </div>
+      ) : vDelivs.map(del => {
+        const latest = del.versions[del.versions.length-1];
+        const allC   = del.versions.flatMap(v=>(vCmts[v.id]||[]));
+        const openC  = allC.filter(c=>!c.resolved).length;
+        return (
+          <div key={del.id} onClick={() => { setCpSelId(del.id); setCpSelVId(latest.id); setCpPH(0); setCpPlaying(false); }}
+            style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", cursor:"pointer", marginBottom:14, display:"flex" }}>
+            <div style={{ width:150, background:del.cover, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, position:"relative", minHeight:100 }}>
+              {latest.url
+                ? <video src={latest.url} preload="metadata" muted style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                : <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(255,255,255,.18)",border:"2px solid rgba(255,255,255,.35)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
+              }
+              <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
+              </div>
+            </div>
+            <div style={{ padding:18, flex:1 }}>
+              <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>{del.title}</p>
+              <p style={{ fontSize:11, color:C.muted, margin:"0 0 10px" }}>{del.versions.length} version{del.versions.length!==1?"s":""} · Latest: {latest.label} · {latest.uploadedAt}</p>
+              {openC>0 && <span style={{ fontSize:11, background:"#fff8ec", color:"#9e7850", border:"1px solid #f4d98a", borderRadius:99, padding:"2px 9px" }}>💬 {openC} open note{openC!==1?"s":""}</span>}
+              {openC===0 && <span style={{ fontSize:11, background:"#edf5ef", color:"#2a5a3a", border:"1px solid #b6e3cc", borderRadius:99, padding:"2px 9px" }}>✓ All notes resolved</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // ── PLAYER VIEW ────────────────────────────────────────────────────────────
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <button onClick={()=>setCpSelId(null)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← All Videos</button>
+        <div style={{ flex:1 }}>
+          <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{cpDel.title}</p>
+          <p style={{ fontSize:11, color:C.muted, margin:0 }}>{cpVer?.label} · {cpVer?.uploadedAt}</p>
+        </div>
+        <div style={{ display:"flex", gap:5 }}>
+          {cpDel.versions.map((v,vi) => (
+            <button key={v.id} onClick={()=>{setCpSelVId(v.id);setCpPH(0);setCpPlaying(false);}}
+              style={{ padding:"4px 11px", borderRadius:8, border:`1px solid ${cpSelVId===v.id?C.ink:C.border}`, background:cpSelVId===v.id?C.ink:"#fff", color:cpSelVId===v.id?"#fff":C.muted, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+              {v.label}{vi===cpDel.versions.length-1?" ✦":""}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {cpVer?.notes && (
+        <div style={{ background:"#f0f4ff", border:"1px solid #c7d7f0", borderRadius:10, padding:"10px 16px", marginBottom:12, display:"flex", gap:8, alignItems:"flex-start" }}>
+          <span style={{ fontSize:12, fontWeight:700, color:"#3b5bdb", flexShrink:0 }}>{cpVer.label}</span>
+          <p style={{ fontSize:12, color:"#3b5bdb", margin:0, lineHeight:1.5 }}>{cpVer.notes}</p>
+        </div>
+      )}
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
+        {/* Player */}
+        <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
+          <div style={{ position:"relative", background:cpVer?.cover||"#111" }}>
+            {cpVer?.url ? (
+              <video ref={cpVidRef} src={cpVer.url} preload="metadata"
+                style={{ width:"100%", maxHeight:360, objectFit:"contain", display:"block", background:"#000" }}
+                onTimeUpdate={e=>setCpPH(Math.floor(e.target.currentTime))}
+                onEnded={()=>setCpPlaying(false)}
+                onClick={()=>{ if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}; setCpPlaying(p=>!p); }}
+              />
+            ) : (
+              <div style={{ height:300, background:cpVer?.cover, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <Ic d={P.film} size={32} style={{ color:"rgba(255,255,255,.3)" }}/>
+              </div>
+            )}
+            {cpVer?.url && cpComments.map(c => (
+              <div key={c.id} onClick={e=>{e.stopPropagation();if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
+                style={{ position:"absolute", bottom:10, left:`${Math.min(95,(c.ts/cpDur)*100)}%`, width:9, height:9, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", border:"2px solid rgba(255,255,255,.6)", transform:"translateX(-50%)", cursor:"pointer", zIndex:5 }}/>
+            ))}
+            <div style={{ position:"absolute", top:10, left:12, background:"rgba(0,0,0,.6)", color:"#fff", fontSize:10, padding:"2px 8px", borderRadius:5, fontFamily:"monospace" }}>
+              {fmt2(cpPH)} / {fmt2(cpDur)}
+            </div>
+          </div>
+          {cpVer?.url && (
+            <div style={{ background:"#111", padding:"10px 14px" }}>
+              <div style={{ position:"relative", height:28, display:"flex", alignItems:"center", cursor:"pointer" }}
+                onClick={e=>{const r=e.currentTarget.getBoundingClientRect();const t=Math.round(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*cpDur);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}}>
+                <div style={{ position:"absolute", left:0, right:0, height:3, background:"rgba(255,255,255,.12)", borderRadius:99 }}>
+                  <div style={{ height:"100%", width:`${(cpPH/cpDur)*100}%`, background:C.accent, borderRadius:99 }}/>
+                </div>
+                {cpComments.map(c=>(
+                  <div key={c.id} style={{ position:"absolute", left:`${Math.min(99,(c.ts/cpDur)*100)}%`, width:8, height:8, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", transform:"translateX(-50%)", zIndex:4, opacity:c.resolved?.4:1 }}/>
+                ))}
+                <div style={{ position:"absolute", left:`${(cpPH/cpDur)*100}%`, width:12, height:12, borderRadius:"50%", background:"#fff", transform:"translateX(-50%)", boxShadow:"0 1px 5px rgba(0,0,0,.4)", zIndex:5 }}/>
+              </div>
+              <div style={{ display:"flex", gap:8, marginTop:4, alignItems:"center" }}>
+                <button onClick={()=>{const t=Math.max(0,cpPH-10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.rewind} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+                <button onClick={()=>{if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}setCpPlaying(p=>!p);}} style={{ width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
+                  <Ic d={cpPlaying?P.pause:P.play} size={13} style={{ color:"#fff" }}/>
+                </button>
+                <button onClick={()=>{const t=Math.min(cpDur,cpPH+10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.fwd} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+                <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.4)" }}>{fmt2(cpPH)} / {fmt2(cpDur)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Comments panel */}
+        <div>
+          <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.border}`, padding:14, marginBottom:12 }}>
+            <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, margin:"0 0 8px" }}>Leave a note at {fmt2(cpPH)}</p>
+            <textarea value={cpText} onChange={e=>setCpText(e.target.value)}
+              placeholder="Pause the video at any moment and type your note here…"
+              style={{ width:"100%", height:72, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
+            <button onClick={addClientComment} disabled={!cpText.trim()}
+              style={{ marginTop:8, width:"100%", padding:"8px 0", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:cpText.trim()?1:.5 }}>
+              Add Note at {fmt2(cpPH)}
+            </button>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
+            {cpComments.length===0 && <p style={{ fontSize:12, color:C.muted, textAlign:"center", padding:"20px 0" }}>No notes yet for this version.</p>}
+            {[...cpComments].sort((a,b)=>a.ts-b.ts).map(c => (
+              <div key={c.id} onClick={()=>{if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
+                style={{ background:c.resolved?"#f9faf8":C.cream, border:`1.5px solid ${c.resolved?"#c3d9c3":C.border}`, borderRadius:10, padding:12, cursor:"pointer", opacity:c.resolved?.7:1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+                    <div style={{ width:24, height:24, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#7a8c9e", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{c.avatar}</div>
+                    <span style={{ fontSize:11, fontWeight:600, color:C.ink }}>{c.author}</span>
+                    <span style={{ fontFamily:"monospace", fontSize:10, fontWeight:700, color:"#fff", background:c.role==="client"?"#c4974a":"#7a8c9e", padding:"1px 6px", borderRadius:4 }}>{fmt2(c.ts)}</span>
+                  </div>
+                  {c.resolved && <span style={{ fontSize:10, color:C.green }}>✓ Resolved</span>}
+                </div>
+                <p style={{ fontSize:12, color:C.ink, margin:0, lineHeight:1.5, textDecoration:c.resolved?"line-through":"none" }}>{c.text}</p>
+                {c.replies?.length>0 && (
+                  <div style={{ borderLeft:`2px solid ${C.border}`, marginLeft:6, paddingLeft:8, marginTop:6 }}>
+                    {c.replies.map((r,i)=>(
+                      <div key={i} style={{ fontSize:11, color:C.ink, marginBottom:3 }}><strong>{r.author}:</strong> {r.text}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
   const allProjects = (appProjects && appProjects.length > 0) ? appProjects : PROJECTS;
   const proj       = allProjects.find(p => p.id === projId) || allProjects[0];
@@ -23750,193 +23933,14 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
         )}
 
         {/* ── VIDEO REVIEW ── */}
-        {tab === "video" && (() => {
-          const vDelivs  = (appVideoDeliverables || {})[proj.id] || [];
-          const vCmts    = appVideoComments || {};
-          const setVCmts = (upd) => setAppVideoComments && setAppVideoComments(prev => typeof upd==="function" ? upd(prev||{}) : upd);
-          const fmt2     = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
-          const [cpSelId,  setCpSelId]  = useState(null);
-          const [cpSelVId, setCpSelVId] = useState(null);
-          const [cpPH,     setCpPH]     = useState(0);
-          const [cpPlaying,setCpPlaying]= useState(false);
-          const [cpText,   setCpText]   = useState("");
-          const cpVidRef                = useRef(null);
-          const cpDel  = vDelivs.find(d=>d.id===cpSelId);
-          const cpVer  = cpDel?.versions.find(v=>v.id===cpSelVId);
-          const cpComments = cpSelVId ? (vCmts[cpSelVId]||[]) : [];
-          const cpDur  = cpVer?.duration || 1;
-
-          const addClientComment = () => {
-            if (!cpText.trim() || !cpSelVId) return;
-            if (cpVidRef.current) setCpPH(Math.floor(cpVidRef.current.currentTime));
-            const ts = cpVidRef.current ? Math.floor(cpVidRef.current.currentTime) : cpPH;
-            const c = { id:Date.now(), ts, author:proj.client||"Client", avatar:(proj.client||"C")[0].toUpperCase(), role:"client", text:cpText.trim(), resolved:false, replies:[], time:"Now" };
-            setVCmts(p => ({ ...p, [cpSelVId]: [...(p[cpSelVId]||[]), c] }));
-            setCpText("");
-          };
-
-          if (!cpSelId || !cpDel) return (
-            <div>
-              <div style={{ marginBottom:20 }}>
-                <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Video Review</h2>
-                <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review your videos and leave timestamped notes for the studio</p>
-              </div>
-              {vDelivs.length === 0 ? (
-                <div style={{ textAlign:"center", padding:60, background:"#fff", borderRadius:16, border:`1px solid ${C.border}` }}>
-                  <Ic d={P.film} size={28} style={{ color:C.muted, display:"block", margin:"0 auto 14px" }}/>
-                  <p style={{ fontSize:15, fontWeight:600, color:C.ink, marginBottom:6 }}>No videos yet</p>
-                  <p style={{ fontSize:13, color:C.muted }}>Your studio will upload your video here once it's ready for review.</p>
-                </div>
-              ) : vDelivs.map(del => {
-                const latest = del.versions[del.versions.length-1];
-                const allC   = del.versions.flatMap(v=>(vCmts[v.id]||[]));
-                const openC  = allC.filter(c=>!c.resolved).length;
-                return (
-                  <div key={del.id} onClick={() => { setCpSelId(del.id); setCpSelVId(latest.id); setCpPH(0); setCpPlaying(false); }}
-                    style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", cursor:"pointer", marginBottom:14, display:"flex" }}>
-                    <div style={{ width:150, background:del.cover, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, position:"relative", minHeight:100 }}>
-                      {latest.url
-                        ? <video src={latest.url} preload="metadata" muted style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
-                        : <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(255,255,255,.18)",border:"2px solid rgba(255,255,255,.35)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
-                      }
-                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                        <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
-                      </div>
-                    </div>
-                    <div style={{ padding:18, flex:1 }}>
-                      <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>{del.title}</p>
-                      <p style={{ fontSize:11, color:C.muted, margin:"0 0 10px" }}>{del.versions.length} version{del.versions.length!==1?"s":""} · Latest: {latest.label} · {latest.uploadedAt}</p>
-                      {openC>0 && <span style={{ fontSize:11, background:"#fff8ec", color:"#9e7850", border:"1px solid #f4d98a", borderRadius:99, padding:"2px 9px" }}>💬 {openC} open note{openC!==1?"s":""}</span>}
-                      {openC===0 && <span style={{ fontSize:11, background:"#edf5ef", color:"#2a5a3a", border:"1px solid #b6e3cc", borderRadius:99, padding:"2px 9px" }}>✓ All notes resolved</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-
-          // ── CLIENT PLAYER VIEW ──
-          return (
-            <div>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
-                <button onClick={()=>setCpSelId(null)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← All Videos</button>
-                <div style={{ flex:1 }}>
-                  <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{cpDel.title}</p>
-                  <p style={{ fontSize:11, color:C.muted, margin:0 }}>{cpVer?.label} · {cpVer?.uploadedAt}</p>
-                </div>
-                {/* Version tabs */}
-                <div style={{ display:"flex", gap:5 }}>
-                  {cpDel.versions.map((v,vi) => (
-                    <button key={v.id} onClick={()=>{setCpSelVId(v.id);setCpPH(0);setCpPlaying(false);}}
-                      style={{ padding:"4px 11px", borderRadius:8, border:`1px solid ${cpSelVId===v.id?C.ink:C.border}`, background:cpSelVId===v.id?C.ink:"#fff", color:cpSelVId===v.id?"#fff":C.muted, fontSize:11, fontWeight:600, cursor:"pointer" }}>
-                      {v.label}{vi===cpDel.versions.length-1?" ✦":""}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Version notes banner */}
-              {cpVer?.notes && (
-                <div style={{ background:"#f0f4ff", border:"1px solid #c7d7f0", borderRadius:10, padding:"10px 16px", marginBottom:12, display:"flex", gap:8, alignItems:"flex-start" }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:"#3b5bdb", flexShrink:0 }}>{cpVer.label}</span>
-                  <p style={{ fontSize:12, color:"#3b5bdb", margin:0, lineHeight:1.5 }}>{cpVer.notes}</p>
-                </div>
-              )}
-
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
-                {/* Player */}
-                <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
-                  <div style={{ position:"relative", background:cpVer?.cover||"#111" }}>
-                    {cpVer?.url ? (
-                      <video ref={cpVidRef} src={cpVer.url} preload="metadata"
-                        style={{ width:"100%", maxHeight:360, objectFit:"contain", display:"block", background:"#000" }}
-                        onTimeUpdate={e=>setCpPH(Math.floor(e.target.currentTime))}
-                        onEnded={()=>setCpPlaying(false)}
-                        onClick={()=>{ if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}; setCpPlaying(p=>!p); }}
-                      />
-                    ) : (
-                      <div style={{ height:300, background:cpVer?.cover, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                        <Ic d={P.film} size={32} style={{ color:"rgba(255,255,255,.3)" }}/>
-                      </div>
-                    )}
-                    {/* Comment dots */}
-                    {cpVer?.url && cpComments.map(c => (
-                      <div key={c.id} onClick={e=>{e.stopPropagation();if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
-                        style={{ position:"absolute", bottom:10, left:`${Math.min(95,(c.ts/cpDur)*100)}%`, width:9, height:9, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", border:"2px solid rgba(255,255,255,.6)", transform:"translateX(-50%)", cursor:"pointer", zIndex:5 }}/>
-                    ))}
-                    {/* Timestamp badge */}
-                    <div style={{ position:"absolute", top:10, left:12, background:"rgba(0,0,0,.6)", color:"#fff", fontSize:10, padding:"2px 8px", borderRadius:5, fontFamily:"monospace" }}>
-                      {fmt2(cpPH)} / {fmt2(cpDur)}
-                    </div>
-                  </div>
-                  {/* Scrubber */}
-                  {cpVer?.url && (
-                    <div style={{ background:"#111", padding:"10px 14px" }}>
-                      <div style={{ position:"relative", height:28, display:"flex", alignItems:"center", cursor:"pointer" }}
-                        onClick={e=>{const r=e.currentTarget.getBoundingClientRect();const t=Math.round(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*cpDur);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}}>
-                        <div style={{ position:"absolute", left:0, right:0, height:3, background:"rgba(255,255,255,.12)", borderRadius:99 }}>
-                          <div style={{ height:"100%", width:`${(cpPH/cpDur)*100}%`, background:C.accent, borderRadius:99 }}/>
-                        </div>
-                        {cpComments.map(c=>(
-                          <div key={c.id} style={{ position:"absolute", left:`${Math.min(99,(c.ts/cpDur)*100)}%`, width:8, height:8, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", transform:"translateX(-50%)", zIndex:4, opacity:c.resolved?.4:1 }}/>
-                        ))}
-                        <div style={{ position:"absolute", left:`${(cpPH/cpDur)*100}%`, width:12, height:12, borderRadius:"50%", background:"#fff", transform:"translateX(-50%)", boxShadow:"0 1px 5px rgba(0,0,0,.4)", zIndex:5 }}/>
-                      </div>
-                      <div style={{ display:"flex", gap:8, marginTop:4, alignItems:"center" }}>
-                        <button onClick={()=>{const t=Math.max(0,cpPH-10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.rewind} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
-                        <button onClick={()=>{if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}setCpPlaying(p=>!p);}} style={{ width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
-                          <Ic d={cpPlaying?P.pause:P.play} size={13} style={{ color:"#fff" }}/>
-                        </button>
-                        <button onClick={()=>{const t=Math.min(cpDur,cpPH+10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.fwd} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
-                        <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.4)" }}>{fmt2(cpPH)} / {fmt2(cpDur)}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Comments panel */}
-                <div>
-                  {/* Add comment */}
-                  <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.border}`, padding:14, marginBottom:12 }}>
-                    <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, margin:"0 0 8px" }}>Leave a note at {fmt2(cpPH)}</p>
-                    <textarea value={cpText} onChange={e=>setCpText(e.target.value)}
-                      placeholder="Pause the video at any moment and type your note here…"
-                      style={{ width:"100%", height:72, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
-                    <button onClick={addClientComment} disabled={!cpText.trim()}
-                      style={{ marginTop:8, width:"100%", padding:"8px 0", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:cpText.trim()?1:.5 }}>
-                      Add Note at {fmt2(cpPH)}
-                    </button>
-                  </div>
-                  {/* Comment list */}
-                  <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
-                    {cpComments.length===0 && <p style={{ fontSize:12, color:C.muted, textAlign:"center", padding:"20px 0" }}>No notes yet for this version.</p>}
-                    {[...cpComments].sort((a,b)=>a.ts-b.ts).map(c => (
-                      <div key={c.id} onClick={()=>{if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
-                        style={{ background:c.resolved?"#f9faf8":C.cream, border:`1.5px solid ${c.resolved?"#c3d9c3":C.border}`, borderRadius:10, padding:12, cursor:"pointer", opacity:c.resolved?.7:1 }}>
-                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
-                          <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-                            <div style={{ width:24, height:24, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#7a8c9e", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{c.avatar}</div>
-                            <span style={{ fontSize:11, fontWeight:600, color:C.ink }}>{c.author}</span>
-                            <span style={{ fontFamily:"monospace", fontSize:10, fontWeight:700, color:"#fff", background:c.role==="client"?"#c4974a":"#7a8c9e", padding:"1px 6px", borderRadius:4 }}>{fmt2(c.ts)}</span>
-                          </div>
-                          {c.resolved && <span style={{ fontSize:10, color:C.green }}>✓ Resolved</span>}
-                        </div>
-                        <p style={{ fontSize:12, color:C.ink, margin:0, lineHeight:1.5, textDecoration:c.resolved?"line-through":"none" }}>{c.text}</p>
-                        {c.replies.length>0 && (
-                          <div style={{ borderLeft:`2px solid ${C.border}`, marginLeft:6, paddingLeft:8, marginTop:6 }}>
-                            {c.replies.map((r,i)=>(
-                              <div key={i} style={{ fontSize:11, color:C.ink, marginBottom:3 }}><strong>{r.author}:</strong> {r.text}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {tab === "video" && (
+          <ClientPortalVideoTab
+            proj={proj}
+            appVideoDeliverables={appVideoDeliverables}
+            appVideoComments={appVideoComments}
+            setAppVideoComments={setAppVideoComments}
+          />
+        )}
 
         {/* ── PROGRESS ── */}
         {tab === "progress" && (
