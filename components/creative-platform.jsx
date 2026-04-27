@@ -1146,6 +1146,21 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
     setNewText(""); setActiveComment(c.id);
   };
 
+  const publishDeliverable = (delId, e) => {
+    if (e) e.stopPropagation();
+    const now = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+    setDeliverables(prev => (prev||[]).map(d =>
+      d.id === delId ? { ...d, published: true, publishedAt: now } : d
+    ));
+  };
+
+  const unpublishDeliverable = (delId, e) => {
+    if (e) e.stopPropagation();
+    setDeliverables(prev => (prev||[]).map(d =>
+      d.id === delId ? { ...d, published: false, publishedAt: null } : d
+    ));
+  };
+
   const addReply = (cid) => {
     if (!replyText.trim()) return;
     const reply = { author:"You", avatar:"ME", role:"editor", text:replyText.trim(), time:"Now" };
@@ -1550,10 +1565,26 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
                     );
                   })}
                 </div>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                   {openCmts>0 && <span style={{ background:"#f4ede3", color:"#9e7850", border:"1px solid #f4d98a", fontSize:11, padding:"2px 9px", borderRadius:99 }}>● {openCmts} open</span>}
                   {resolvedCmts>0 && <span style={{ background:"#edf0ec", color:C.green, border:`1px solid #b6e3cc`, fontSize:11, padding:"2px 9px", borderRadius:99 }}>✓ {resolvedCmts} resolved</span>}
                   {allVerCmts.length===0 && <span style={{ background:C.warm, color:C.muted, border:`1px solid ${C.border}`, fontSize:11, padding:"2px 9px", borderRadius:99 }}>Awaiting feedback</span>}
+                </div>
+                {/* Publish / Published status */}
+                <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8 }}>
+                  {del.published ? (
+                    <>
+                      <span style={{ fontSize:11, background:"#edf5ef", color:"#2a5a3a", border:"1px solid #b6e3cc", borderRadius:99, padding:"4px 12px", fontWeight:600 }}>
+                        ✓ Published to Client · {del.publishedAt}
+                      </span>
+                      <button onClick={e=>unpublishDeliverable(del.id,e)} style={{ fontSize:11, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"3px 9px", cursor:"pointer" }}>Unpublish</button>
+                    </>
+                  ) : (
+                    <button onClick={e=>publishDeliverable(del.id,e)}
+                      style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 16px", background:C.green, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                      Publish for Client
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1671,6 +1702,26 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
           ))}
         </div>
       </div>
+
+      {/* Publish status bar */}
+      {selDel && (
+        selDel.published ? (
+          <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 16px", background:"#edf5ef", border:"1px solid #b6e3cc", borderRadius:10 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, flexShrink:0 }}/>
+            <span style={{ fontSize:13, fontWeight:600, color:"#1a4a2a", flex:1 }}>Published to client · {selDel.publishedAt}</span>
+            <span style={{ fontSize:12, color:"#2a5a3a" }}>Client can now watch and leave notes in their portal</span>
+            <button onClick={()=>unpublishDeliverable(selDel.id)} style={{ padding:"4px 12px", background:"none", border:"1px solid #b6e3cc", borderRadius:7, fontSize:11, color:"#4a7a57", cursor:"pointer" }}>Unpublish</button>
+          </div>
+        ) : (
+          <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 16px", background:C.warm, border:`1px solid ${C.border}`, borderRadius:10 }}>
+            <span style={{ fontSize:13, color:C.muted, flex:1 }}>This video is not yet visible to the client.</span>
+            <button onClick={()=>publishDeliverable(selDel.id)}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 18px", background:C.green, color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              Publish for Client
+            </button>
+          </div>
+        )
+      )}
 
       {/* Upload new version panel */}
       {showUpload && (
