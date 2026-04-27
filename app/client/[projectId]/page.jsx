@@ -111,8 +111,8 @@ export default function ClientPortalPage({ params }) {
         // Lazy-init Supabase inside the effect so module-level init never runs on the server
         const { createClient } = await import("@supabase/supabase-js");
         const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          "https://czmzxwtnzyguhbmivizq.supabase.co",
+          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6bXp4d3RuenlndWhibWl2aXpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODMwNTksImV4cCI6MjA5MjQ1OTA1OX0.8BFEhkHdCx0PgZ8SuySMlWk68AtMtcvT3sSsxj88wJo"
         );
 
         const { data: result, error } = await supabase.rpc("get_client_portal_data", {
