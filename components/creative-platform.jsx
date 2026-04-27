@@ -1037,11 +1037,19 @@ const VIDEO_DELIVERABLES_COMMENTS = {
 };
 
 // ── Project Video Review Tab — versioned (Frame.io style) ─────
-const ProjectVideoTab = ({ proj }) => {
-  const initDelivs = (VIDEO_DELIVERABLES_SEED[proj.client] || []).map(d => ({...d}));
-
-  const [deliverables,  setDeliverables]  = useState(initDelivs);
-  const [allComments,   setAllComments]   = useState(VIDEO_DELIVERABLES_COMMENTS);
+const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+  // Derive from lifted state, fall back to empty
+  const deliverables = appVideoDeliverables?.[proj.id] || [];
+  const setDeliverables = (updater) => {
+    setAppVideoDeliverables(prev => ({
+      ...prev,
+      [proj.id]: typeof updater === "function" ? updater(prev?.[proj.id] || []) : updater,
+    }));
+  };
+  const allComments = appVideoComments || {};
+  const setAllComments = (updater) => {
+    setAppVideoComments(prev => typeof updater === "function" ? updater(prev || {}) : updater);
+  };
   const [view,          setView]          = useState("list");   // list | player | compare
   const [selDelId,      setSelDelId]      = useState(null);
   const [selVerId,      setSelVerId]      = useState(null);
@@ -1058,10 +1066,21 @@ const ProjectVideoTab = ({ proj }) => {
   const [replyText,     setReplyText]     = useState("");
   const [showUpload,    setShowUpload]    = useState(false);
   const [uploadNotes,   setUploadNotes]   = useState("");
+  const [uploadFile,    setUploadFile]    = useState(null);   // File object for new version
   const [uploading,     setUploading]     = useState(false);
   const [uploadDone,    setUploadDone]    = useState(false);
   const [dragOver,      setDragOver]      = useState(false);
   const [hoverTs,       setHoverTs]       = useState(null);
+  // New deliverable creation
+  const [showNewDel,    setShowNewDel]    = useState(false);
+  const [newDelTitle,   setNewDelTitle]   = useState("");
+  const [newDelFile,    setNewDelFile]    = useState(null);
+  const [newDelNotes,   setNewDelNotes]   = useState("");
+  const [newDelDrag,    setNewDelDrag]    = useState(false);
+  const [creatingDel,   setCreatingDel]   = useState(false);
+  // Refs for real video playback
+  const videoRef    = useRef(null);
+  const cmpVideoRef = useRef(null);
 
   const fmt = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
   const selDel  = deliverables.find(d => d.id === selDelId);
@@ -1140,44 +1159,157 @@ const ProjectVideoTab = ({ proj }) => {
     if (syncPlay) { setPlayhead(ts); setPlaying(false); }
   };
 
-  const doUpload = () => {
+  // Upload a new version of an existing deliverable
+  const doUpload = async () => {
     if (!selDel) return;
     setUploading(true);
-    setTimeout(() => {
-      const nextN = selDel.versions.length + 1;
-      const newVerId = selDel.id + "V" + nextN;
-      const newVer = { id:newVerId, label:`v${nextN}`, round:nextN, duration:selDel.versions[selDel.versions.length-1].duration, cover:selDel.versions[0].cover, uploadedAt:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}), notes:uploadNotes||`Version ${nextN} — new revision` };
-      setDeliverables(prev => prev.map(d => d.id===selDelId ? {...d, versions:[...d.versions, newVer]} : d));
-      setAllComments(p => ({ ...p, [newVerId]: [] }));
-      setUploading(false); setUploadDone(true);
-      setTimeout(() => { setUploadDone(false); setShowUpload(false); setUploadNotes(""); setCmpVerId(selVerId); switchVersion(newVerId); }, 1800);
-    }, 1400);
+    let videoUrl = null;
+    let duration = selDel.versions[selDel.versions.length-1]?.duration || 120;
+    if (uploadFile) {
+      // Get real duration from the file
+      try {
+        const blobUrl = URL.createObjectURL(uploadFile);
+        await new Promise(res => {
+          const v = document.createElement("video");
+          v.src = blobUrl;
+          v.onloadedmetadata = () => { duration = Math.round(v.duration); URL.revokeObjectURL(blobUrl); res(); };
+          v.onerror = res;
+        });
+      } catch(_) {}
+      // Upload to Supabase Storage
+      const ext = uploadFile.name.split(".").pop().toLowerCase();
+      const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data, error } = await supabase.storage.from("Media").upload(path, uploadFile, { upsert: true });
+      if (!error && data) {
+        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+        videoUrl = publicUrl;
+      }
+    }
+    const nextN = selDel.versions.length + 1;
+    const newVerId = `${selDel.id}V${nextN}`;
+    const newVer = {
+      id: newVerId, label: `v${nextN}`, round: nextN, duration,
+      cover: selDel.versions[0].cover, url: videoUrl,
+      uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+      notes: uploadNotes || `Version ${nextN} — new revision`,
+    };
+    setDeliverables(prev => (prev||[]).map(d => d.id===selDelId ? {...d, versions:[...d.versions, newVer]} : d));
+    setAllComments(p => ({ ...p, [newVerId]: [] }));
+    setUploading(false); setUploadDone(true); setUploadFile(null);
+    setTimeout(() => { setUploadDone(false); setShowUpload(false); setUploadNotes(""); setCmpVerId(selVerId); switchVersion(newVerId); }, 1600);
   };
+
+  // Create a brand-new deliverable from list view
+  const createDeliverable = async () => {
+    if (!newDelTitle.trim()) return;
+    setCreatingDel(true);
+    let videoUrl = null;
+    let duration = 120;
+    const COVERS = ["linear-gradient(135deg,#1a1a2e,#16213e)","linear-gradient(135deg,#2d1b3d,#1a0f2e)","linear-gradient(135deg,#1a2e1a,#0f1f0f)","linear-gradient(135deg,#2e1a1a,#1f0f0f)","linear-gradient(135deg,#1a1f2e,#0f1520)"];
+    const cover = COVERS[deliverables.length % COVERS.length];
+    if (newDelFile) {
+      try {
+        const blobUrl = URL.createObjectURL(newDelFile);
+        await new Promise(res => {
+          const v = document.createElement("video");
+          v.src = blobUrl;
+          v.onloadedmetadata = () => { duration = Math.round(v.duration); URL.revokeObjectURL(blobUrl); res(); };
+          v.onerror = res;
+        });
+      } catch(_) {}
+      const ext = newDelFile.name.split(".").pop().toLowerCase();
+      const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data, error } = await supabase.storage.from("Media").upload(path, newDelFile, { upsert: true });
+      if (!error && data) {
+        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
+        videoUrl = publicUrl;
+      }
+    }
+    const delId = `DEL_${proj.id}_${Date.now()}`;
+    const verId = `${delId}V1`;
+    const newDel = {
+      id: delId, title: newDelTitle.trim(), cover,
+      versions: [{
+        id: verId, label: "v1", round: 1, duration, cover, url: videoUrl,
+        uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+        notes: newDelNotes.trim() || "Initial cut — ready for review",
+      }],
+    };
+    setDeliverables(prev => [...(prev||[]), newDel]);
+    setAllComments(p => ({ ...p, [verId]: [] }));
+    setCreatingDel(false); setShowNewDel(false); setNewDelTitle(""); setNewDelFile(null); setNewDelNotes("");
+    openPlayer(delId);
+  };
+
+  // Sync real video element with play/pause state
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !selVer?.url) return;
+    if (playing) el.play().catch(()=>{});
+    else el.pause();
+  }, [playing, selVer?.url]);
 
   // Shared mini player renderer (used in both player and compare views)
   const renderPlayer = (ver, ph, setPh, isPlaying, setIsPlaying, comments, isMain) => {
     if (!ver) return null;
     const dur = ver.duration || 1;
+    const ref = isMain ? videoRef : cmpVideoRef;
+    const hasRealVideo = !!ver.url;
+    const togglePlay = () => {
+      if (syncPlay && view==="compare") { setPlaying(p=>!p); }
+      else {
+        if (hasRealVideo && ref.current) {
+          if (isPlaying) ref.current.pause(); else ref.current.play().catch(()=>{});
+        }
+        setIsPlaying(p=>!p);
+      }
+    };
+    const scrub = (e) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const ts = Math.round(Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))*dur);
+      setPh(ts);
+      if (hasRealVideo && ref.current) ref.current.currentTime = ts;
+      if (isMain) { setPlaying(false); if (syncPlay && view==="compare") setCmpPlayhead(ts); }
+    };
     return (
       <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
-        {/* Canvas */}
-        <div style={{ background:ver.cover, height:isMain&&view==="player"?300:200, display:"flex", alignItems:"center", justifyContent:"center", position:"relative", cursor:"pointer" }}
-          onClick={()=>{if(syncPlay&&view==="compare"){setPlaying(p=>!p);}else setIsPlaying(p=>!p);}}>
-          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <div style={{ width:isMain&&view==="player"?56:44, height:isMain&&view==="player"?56:44, borderRadius:"50%", background:"rgba(0,0,0,.5)", border:"2px solid rgba(255,255,255,.5)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Ic d={(syncPlay&&view==="compare"?playing:isPlaying)?P.pause:P.play} size={isMain&&view==="player"?20:16} style={{ color:"#fff" }}/>
+        {/* Video area */}
+        <div style={{ position:"relative", height:isMain&&view==="player"?300:200, background:ver.cover, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}
+          onClick={togglePlay}>
+          {hasRealVideo ? (
+            <video ref={ref} src={ver.url} preload="metadata"
+              style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"contain", background:"#000", cursor:"pointer" }}
+              onTimeUpdate={e => { const t=Math.floor(e.target.currentTime); setPh(t); if(isMain&&syncPlay&&view==="compare") setCmpPlayhead(t); }}
+              onEnded={() => { setIsPlaying(false); if(isMain) setPlaying(false); }}
+              onClick={e => { e.stopPropagation(); togglePlay(); }}
+            />
+          ) : (
+            <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <div style={{ width:isMain&&view==="player"?56:44, height:isMain&&view==="player"?56:44, borderRadius:"50%", background:"rgba(0,0,0,.5)", border:"2px solid rgba(255,255,255,.5)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <Ic d={(syncPlay&&view==="compare"?playing:isPlaying)?P.pause:P.play} size={isMain&&view==="player"?20:16} style={{ color:"#fff" }}/>
+              </div>
             </div>
-          </div>
-          {/* Comment dots on video */}
+          )}
+          {/* Play/pause overlay for real video */}
+          {hasRealVideo && (
+            <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none", zIndex:2 }}>
+              {!(syncPlay&&view==="compare"?playing:isPlaying) && (
+                <div style={{ width:isMain&&view==="player"?56:44, height:isMain&&view==="player"?56:44, borderRadius:"50%", background:"rgba(0,0,0,.45)", border:"2px solid rgba(255,255,255,.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <Ic d={P.play} size={isMain&&view==="player"?20:16} style={{ color:"#fff" }}/>
+                </div>
+              )}
+            </div>
+          )}
+          {/* Comment dots */}
           {comments.map(c => (
-            <div key={c.id} onClick={e=>{e.stopPropagation();if(isMain)jumpTo(c);else{setCmpPlayhead(c.ts);}}}
+            <div key={c.id} onClick={e=>{e.stopPropagation();if(isMain)jumpTo(c);else{setCmpPlayhead(c.ts);if(cmpVideoRef.current)cmpVideoRef.current.currentTime=c.ts;}}}
               style={{ position:"absolute", bottom:10, left:`${Math.min(95,(c.ts/dur)*100)}%`, width:c.id===activeComment?11:7, height:c.id===activeComment?11:7, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", border:`2px solid ${c.id===activeComment?"#fff":"rgba(255,255,255,.4)"}`, transform:"translateX(-50%)", cursor:"pointer", transition:"all .15s", zIndex:5 }}/>
           ))}
-          <div style={{ position:"absolute", top:10, left:12, background:"rgba(0,0,0,.55)", color:"#fff", fontSize:10, padding:"2px 8px", borderRadius:5, fontFamily:"monospace", backdropFilter:"blur(4px)" }}>
+          <div style={{ position:"absolute", top:10, left:12, background:"rgba(0,0,0,.55)", color:"#fff", fontSize:10, padding:"2px 8px", borderRadius:5, fontFamily:"monospace", backdropFilter:"blur(4px)", zIndex:3 }}>
             {fmt(ph)} / {fmt(dur)}
           </div>
           {view==="compare" && (
-            <div style={{ position:"absolute", top:10, right:12, background:isMain?"rgba(42,90,58,.85)":"rgba(30,58,138,.8)", color:"#fff", fontSize:10, fontWeight:700, padding:"2px 9px", borderRadius:5 }}>
+            <div style={{ position:"absolute", top:10, right:12, background:isMain?"rgba(42,90,58,.85)":"rgba(30,58,138,.8)", color:"#fff", fontSize:10, fontWeight:700, padding:"2px 9px", borderRadius:5, zIndex:3 }}>
               {ver.label}{isMain?" · current":""}
             </div>
           )}
@@ -1185,26 +1317,26 @@ const ProjectVideoTab = ({ proj }) => {
         {/* Scrubber */}
         <div style={{ background:"#111", padding:"10px 14px" }}>
           <div style={{ position:"relative", height:28, display:"flex", alignItems:"center", cursor:"pointer" }}
-            onClick={isMain?scrubMainClick:scrubCmpClick}
+            onClick={scrub}
             onMouseMove={e=>{if(isMain){const r=e.currentTarget.getBoundingClientRect();setHoverTs(Math.round(((e.clientX-r.left)/r.width)*dur));}}}
             onMouseLeave={()=>isMain&&setHoverTs(null)}>
             <div style={{ position:"absolute", left:0, right:0, height:3, background:"rgba(255,255,255,.12)", borderRadius:99 }}>
-              <div style={{ height:"100%", width:`${(ph/dur)*100}%`, background:C.accent, borderRadius:99, transition:"width .5s linear" }}/>
+              <div style={{ height:"100%", width:`${(ph/dur)*100}%`, background:C.accent, borderRadius:99 }}/>
             </div>
             {comments.map(c => (
               <div key={c.id} style={{ position:"absolute", left:`${Math.min(99,(c.ts/dur)*100)}%`, width:c.resolved?7:9, height:c.resolved?7:9, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", border:`1.5px solid ${c.id===activeComment?"#fff":"#333"}`, transform:"translateX(-50%)", cursor:"pointer", zIndex:4, opacity:c.resolved?.45:1 }}/>
             ))}
-            <div style={{ position:"absolute", left:`${(ph/dur)*100}%`, width:12, height:12, borderRadius:"50%", background:"#fff", transform:"translateX(-50%)", boxShadow:"0 1px 5px rgba(0,0,0,.4)", zIndex:5, transition:"left .5s linear" }}/>
+            <div style={{ position:"absolute", left:`${(ph/dur)*100}%`, width:12, height:12, borderRadius:"50%", background:"#fff", transform:"translateX(-50%)", boxShadow:"0 1px 5px rgba(0,0,0,.4)", zIndex:5 }}/>
             {isMain && hoverTs!==null && (
               <div style={{ position:"absolute", left:`${(hoverTs/dur)*100}%`, bottom:16, transform:"translateX(-50%)", background:"rgba(0,0,0,.75)", color:"#fff", fontSize:10, padding:"1px 6px", borderRadius:4, fontFamily:"monospace", pointerEvents:"none" }}>{fmt(hoverTs)}</div>
             )}
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:3 }}>
-            <button onClick={()=>setPh(p=>Math.max(0,p-10))} style={{ background:"none", border:"none", cursor:"pointer" }}><Ic d={P.rewind} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
-            <button onClick={()=>{if(syncPlay&&view==="compare"){setPlaying(p=>!p);}else setIsPlaying(p=>!p);}} style={{ width:30, height:30, borderRadius:8, background:"rgba(255,255,255,.1)", border:"1px solid rgba(255,255,255,.15)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <button onClick={()=>{ const t=Math.max(0,ph-10); setPh(t); if(hasRealVideo&&ref.current)ref.current.currentTime=t; }} style={{ background:"none", border:"none", cursor:"pointer" }}><Ic d={P.rewind} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+            <button onClick={togglePlay} style={{ width:30, height:30, borderRadius:8, background:"rgba(255,255,255,.1)", border:"1px solid rgba(255,255,255,.15)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
               <Ic d={(syncPlay&&view==="compare"?playing:isPlaying)?P.pause:P.play} size={13} style={{ color:"#fff" }}/>
             </button>
-            <button onClick={()=>setPh(p=>Math.min(dur,p+10))} style={{ background:"none", border:"none", cursor:"pointer" }}><Ic d={P.fwd} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+            <button onClick={()=>{ const t=Math.min(dur,ph+10); setPh(t); if(hasRealVideo&&ref.current)ref.current.currentTime=t; }} style={{ background:"none", border:"none", cursor:"pointer" }}><Ic d={P.fwd} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
             <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.4)", marginLeft:2 }}>{fmt(ph)} / {fmt(dur)}</span>
           </div>
         </div>
@@ -1273,12 +1405,61 @@ const ProjectVideoTab = ({ proj }) => {
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <p style={{ fontSize:13, color:C.muted }}>{deliverables.length} deliverable{deliverables.length!==1?"s":""} · {deliverables.reduce((s,d)=>s+d.versions.length,0)} total versions</p>
+        <Btn icon="upload" onClick={()=>setShowNewDel(v=>!v)}>Upload Video</Btn>
       </div>
-      {deliverables.length===0 && (
+
+      {/* ── NEW DELIVERABLE PANEL ── */}
+      {showNewDel && (
+        <Card style={{ padding:22, border:`1.5px dashed ${C.accent}` }}>
+          <p style={{ fontSize:14, fontWeight:600, color:C.ink, marginBottom:14 }}>Upload a New Video</p>
+          {/* Drop zone */}
+          <div onDragOver={e=>{e.preventDefault();setNewDelDrag(true);}} onDragLeave={()=>setNewDelDrag(false)}
+            onDrop={e=>{e.preventDefault();setNewDelDrag(false);const f=e.dataTransfer.files?.[0];if(f&&f.type.startsWith("video/"))setNewDelFile(f);}}
+            style={{ border:`2px dashed ${newDelDrag?C.ink:newDelFile?"#4a7a57":C.border}`, borderRadius:10, padding:"20px 16px", textAlign:"center", background:newDelDrag?C.warm:newDelFile?"#edf5ef":C.cream, marginBottom:14, transition:"all .2s" }}>
+            {newDelFile ? (
+              <div>
+                <p style={{ fontSize:13, fontWeight:600, color:"#2a5a3a", marginBottom:4 }}>✓ {newDelFile.name}</p>
+                <p style={{ fontSize:11, color:C.muted, marginBottom:8 }}>{(newDelFile.size/1024/1024).toFixed(1)} MB</p>
+                <button onClick={()=>setNewDelFile(null)} style={{ fontSize:11, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>Remove</button>
+              </div>
+            ) : (
+              <>
+                <Ic d={P.film} size={24} style={{ color:C.muted, display:"block", margin:"0 auto 8px" }}/>
+                <p style={{ fontSize:12, color:C.muted, marginBottom:8 }}>Drag & drop your video here, or</p>
+                <label style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 16px", background:C.ink, color:"#fff", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                  <Ic d={P.upload} size={12}/> Browse Files
+                  <input type="file" accept="video/*" style={{ display:"none" }} onChange={e=>{const f=e.target.files?.[0];if(f)setNewDelFile(f);e.target.value="";}}/>
+                </label>
+              </>
+            )}
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <label style={{ fontSize:11, color:C.muted, fontWeight:600, textTransform:"uppercase", letterSpacing:.3, display:"block", marginBottom:5 }}>Video Title *</label>
+            <input value={newDelTitle} onChange={e=>setNewDelTitle(e.target.value)} placeholder="e.g. Wedding Highlight Film, Brand Promo v1"
+              style={{ width:"100%", padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:13, background:C.cream, color:C.ink, boxSizing:"border-box", fontFamily:"inherit" }}/>
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:11, color:C.muted, fontWeight:600, textTransform:"uppercase", letterSpacing:.3, display:"block", marginBottom:5 }}>Notes for Client (optional)</label>
+            <textarea value={newDelNotes} onChange={e=>setNewDelNotes(e.target.value)} placeholder="e.g. First cut — please focus feedback on the opening sequence and music choice"
+              style={{ width:"100%", height:60, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={createDeliverable} disabled={creatingDel||!newDelTitle.trim()}
+              style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 18px", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:(!newDelTitle.trim()||creatingDel)?0.5:1 }}>
+              <Ic d={P.upload} size={13} style={{ color:"#fff" }}/> {creatingDel?"Uploading…":"Upload & Open Review"}
+            </button>
+            <button onClick={()=>{setShowNewDel(false);setNewDelFile(null);setNewDelTitle("");setNewDelNotes("");}}
+              style={{ padding:"8px 14px", background:C.warm, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, color:C.ink, cursor:"pointer" }}>Cancel</button>
+          </div>
+        </Card>
+      )}
+
+      {deliverables.length===0 && !showNewDel && (
         <Card style={{ padding:60, textAlign:"center" }}>
           <Ic d={P.film} size={28} style={{ color:C.muted, display:"block", margin:"0 auto 14px" }}/>
           <p style={{ fontSize:15, fontWeight:600, color:C.ink, marginBottom:6 }}>No videos yet</p>
           <p style={{ fontSize:13, color:C.muted, marginBottom:18 }}>Upload a cut so your client can leave timestamped feedback.</p>
+          <Btn icon="upload" onClick={()=>setShowNewDel(true)}>Upload First Video</Btn>
         </Card>
       )}
       {deliverables.map(del => {
@@ -1448,14 +1629,25 @@ const ProjectVideoTab = ({ proj }) => {
       {showUpload && (
         <Card style={{ padding:20, border:`1px dashed ${C.accent}` }}>
           <p style={{ fontSize:13, fontWeight:600, color:C.ink, marginBottom:12 }}>Upload v{(selDel?.versions.length||0)+1}</p>
-          <div onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);}}
-            style={{ border:`2px dashed ${dragOver?C.ink:C.border}`, borderRadius:10, padding:"22px 16px", textAlign:"center", background:dragOver?C.warm:C.cream, marginBottom:12, transition:"all .2s" }}>
-            <Ic d={P.film} size={22} style={{ color:C.muted, display:"block", margin:"0 auto 8px" }}/>
-            <p style={{ fontSize:12, color:C.muted, marginBottom:7 }}>Drag & drop your file here, or</p>
-            <label style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 16px", background:C.ink, color:"#fff", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
-              <Ic d={P.upload} size={12}/> Browse Files
-              <input type="file" accept="video/*" style={{ display:"none" }} onChange={()=>{}}/>
-            </label>
+          <div onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)}
+            onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files?.[0];if(f&&f.type.startsWith("video/"))setUploadFile(f);}}
+            style={{ border:`2px dashed ${dragOver?C.ink:uploadFile?"#4a7a57":C.border}`, borderRadius:10, padding:"22px 16px", textAlign:"center", background:dragOver?C.warm:uploadFile?"#edf5ef":C.cream, marginBottom:12, transition:"all .2s" }}>
+            {uploadFile ? (
+              <div>
+                <p style={{ fontSize:13, fontWeight:600, color:"#2a5a3a", marginBottom:4 }}>✓ {uploadFile.name}</p>
+                <p style={{ fontSize:11, color:C.muted, marginBottom:8 }}>{(uploadFile.size/1024/1024).toFixed(1)} MB</p>
+                <button onClick={()=>setUploadFile(null)} style={{ fontSize:11, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>Remove</button>
+              </div>
+            ) : (
+              <>
+                <Ic d={P.film} size={22} style={{ color:C.muted, display:"block", margin:"0 auto 8px" }}/>
+                <p style={{ fontSize:12, color:C.muted, marginBottom:7 }}>Drag & drop your file here, or</p>
+                <label style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 16px", background:C.ink, color:"#fff", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                  <Ic d={P.upload} size={12}/> Browse Files
+                  <input type="file" accept="video/*" style={{ display:"none" }} onChange={e=>{const f=e.target.files?.[0];if(f)setUploadFile(f);e.target.value="";}}/>
+                </label>
+              </>
+            )}
           </div>
           <div style={{ marginBottom:10 }}>
             <label style={{ fontSize:11, color:C.muted, fontWeight:600, textTransform:"uppercase", letterSpacing:.3, display:"block", marginBottom:5 }}>What changed in this version?</label>
@@ -4460,7 +4652,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, appInvoices, setAppInvoices }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -5716,7 +5908,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         {tab === "planning" && <ProjectPlanningTab proj={proj}/>}
 
         {/* ── VIDEO REVIEW ── */}
-        {tab === "video" && <ProjectVideoTab proj={proj}/>}
+        {tab === "video" && <ProjectVideoTab proj={proj} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>}
         {tab === "preview" && <ClientPreviewTab proj={proj}/>}
       </div>
       </>
@@ -23305,7 +23497,7 @@ const ClientDashboard = ({
   );
 };
 
-const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices }) => {
+const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
   const allProjects = (appProjects && appProjects.length > 0) ? appProjects : PROJECTS;
   const proj       = allProjects.find(p => p.id === projId) || allProjects[0];
   if (!proj) return (
@@ -23367,6 +23559,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const PORTAL_TABS = [
     { id:"home",      label:"Home",      icon:P.home   },
     { id:"gallery",   label:"Gallery",   icon:P.image  },
+    { id:"video",     label:"Videos",    icon:P.film   },
     { id:"progress",  label:"Progress",  icon:P.check  },
     { id:"messages",  label:"Messages",  icon:P.msg    },
     { id:"invoice",   label:"Invoice",   icon:P.file   },
@@ -23555,6 +23748,195 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
             photos={galleryPhotos?.[proj.id] || []}
           />
         )}
+
+        {/* ── VIDEO REVIEW ── */}
+        {tab === "video" && (() => {
+          const vDelivs  = (appVideoDeliverables || {})[proj.id] || [];
+          const vCmts    = appVideoComments || {};
+          const setVCmts = (upd) => setAppVideoComments && setAppVideoComments(prev => typeof upd==="function" ? upd(prev||{}) : upd);
+          const fmt2     = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+          const [cpSelId,  setCpSelId]  = useState(null);
+          const [cpSelVId, setCpSelVId] = useState(null);
+          const [cpPH,     setCpPH]     = useState(0);
+          const [cpPlaying,setCpPlaying]= useState(false);
+          const [cpText,   setCpText]   = useState("");
+          const cpVidRef                = useRef(null);
+          const cpDel  = vDelivs.find(d=>d.id===cpSelId);
+          const cpVer  = cpDel?.versions.find(v=>v.id===cpSelVId);
+          const cpComments = cpSelVId ? (vCmts[cpSelVId]||[]) : [];
+          const cpDur  = cpVer?.duration || 1;
+
+          const addClientComment = () => {
+            if (!cpText.trim() || !cpSelVId) return;
+            if (cpVidRef.current) setCpPH(Math.floor(cpVidRef.current.currentTime));
+            const ts = cpVidRef.current ? Math.floor(cpVidRef.current.currentTime) : cpPH;
+            const c = { id:Date.now(), ts, author:proj.client||"Client", avatar:(proj.client||"C")[0].toUpperCase(), role:"client", text:cpText.trim(), resolved:false, replies:[], time:"Now" };
+            setVCmts(p => ({ ...p, [cpSelVId]: [...(p[cpSelVId]||[]), c] }));
+            setCpText("");
+          };
+
+          if (!cpSelId || !cpDel) return (
+            <div>
+              <div style={{ marginBottom:20 }}>
+                <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Video Review</h2>
+                <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review your videos and leave timestamped notes for the studio</p>
+              </div>
+              {vDelivs.length === 0 ? (
+                <div style={{ textAlign:"center", padding:60, background:"#fff", borderRadius:16, border:`1px solid ${C.border}` }}>
+                  <Ic d={P.film} size={28} style={{ color:C.muted, display:"block", margin:"0 auto 14px" }}/>
+                  <p style={{ fontSize:15, fontWeight:600, color:C.ink, marginBottom:6 }}>No videos yet</p>
+                  <p style={{ fontSize:13, color:C.muted }}>Your studio will upload your video here once it's ready for review.</p>
+                </div>
+              ) : vDelivs.map(del => {
+                const latest = del.versions[del.versions.length-1];
+                const allC   = del.versions.flatMap(v=>(vCmts[v.id]||[]));
+                const openC  = allC.filter(c=>!c.resolved).length;
+                return (
+                  <div key={del.id} onClick={() => { setCpSelId(del.id); setCpSelVId(latest.id); setCpPH(0); setCpPlaying(false); }}
+                    style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", cursor:"pointer", marginBottom:14, display:"flex" }}>
+                    <div style={{ width:150, background:del.cover, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, position:"relative", minHeight:100 }}>
+                      {latest.url
+                        ? <video src={latest.url} preload="metadata" muted style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                        : <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(255,255,255,.18)",border:"2px solid rgba(255,255,255,.35)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
+                      }
+                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <div style={{ width:42,height:42,borderRadius:"50%",background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center" }}><Ic d={P.play} size={16} style={{ color:"#fff" }}/></div>
+                      </div>
+                    </div>
+                    <div style={{ padding:18, flex:1 }}>
+                      <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>{del.title}</p>
+                      <p style={{ fontSize:11, color:C.muted, margin:"0 0 10px" }}>{del.versions.length} version{del.versions.length!==1?"s":""} · Latest: {latest.label} · {latest.uploadedAt}</p>
+                      {openC>0 && <span style={{ fontSize:11, background:"#fff8ec", color:"#9e7850", border:"1px solid #f4d98a", borderRadius:99, padding:"2px 9px" }}>💬 {openC} open note{openC!==1?"s":""}</span>}
+                      {openC===0 && <span style={{ fontSize:11, background:"#edf5ef", color:"#2a5a3a", border:"1px solid #b6e3cc", borderRadius:99, padding:"2px 9px" }}>✓ All notes resolved</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+
+          // ── CLIENT PLAYER VIEW ──
+          return (
+            <div>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+                <button onClick={()=>setCpSelId(null)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← All Videos</button>
+                <div style={{ flex:1 }}>
+                  <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{cpDel.title}</p>
+                  <p style={{ fontSize:11, color:C.muted, margin:0 }}>{cpVer?.label} · {cpVer?.uploadedAt}</p>
+                </div>
+                {/* Version tabs */}
+                <div style={{ display:"flex", gap:5 }}>
+                  {cpDel.versions.map((v,vi) => (
+                    <button key={v.id} onClick={()=>{setCpSelVId(v.id);setCpPH(0);setCpPlaying(false);}}
+                      style={{ padding:"4px 11px", borderRadius:8, border:`1px solid ${cpSelVId===v.id?C.ink:C.border}`, background:cpSelVId===v.id?C.ink:"#fff", color:cpSelVId===v.id?"#fff":C.muted, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                      {v.label}{vi===cpDel.versions.length-1?" ✦":""}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Version notes banner */}
+              {cpVer?.notes && (
+                <div style={{ background:"#f0f4ff", border:"1px solid #c7d7f0", borderRadius:10, padding:"10px 16px", marginBottom:12, display:"flex", gap:8, alignItems:"flex-start" }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:"#3b5bdb", flexShrink:0 }}>{cpVer.label}</span>
+                  <p style={{ fontSize:12, color:"#3b5bdb", margin:0, lineHeight:1.5 }}>{cpVer.notes}</p>
+                </div>
+              )}
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
+                {/* Player */}
+                <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
+                  <div style={{ position:"relative", background:cpVer?.cover||"#111" }}>
+                    {cpVer?.url ? (
+                      <video ref={cpVidRef} src={cpVer.url} preload="metadata"
+                        style={{ width:"100%", maxHeight:360, objectFit:"contain", display:"block", background:"#000" }}
+                        onTimeUpdate={e=>setCpPH(Math.floor(e.target.currentTime))}
+                        onEnded={()=>setCpPlaying(false)}
+                        onClick={()=>{ if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}; setCpPlaying(p=>!p); }}
+                      />
+                    ) : (
+                      <div style={{ height:300, background:cpVer?.cover, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <Ic d={P.film} size={32} style={{ color:"rgba(255,255,255,.3)" }}/>
+                      </div>
+                    )}
+                    {/* Comment dots */}
+                    {cpVer?.url && cpComments.map(c => (
+                      <div key={c.id} onClick={e=>{e.stopPropagation();if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
+                        style={{ position:"absolute", bottom:10, left:`${Math.min(95,(c.ts/cpDur)*100)}%`, width:9, height:9, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", border:"2px solid rgba(255,255,255,.6)", transform:"translateX(-50%)", cursor:"pointer", zIndex:5 }}/>
+                    ))}
+                    {/* Timestamp badge */}
+                    <div style={{ position:"absolute", top:10, left:12, background:"rgba(0,0,0,.6)", color:"#fff", fontSize:10, padding:"2px 8px", borderRadius:5, fontFamily:"monospace" }}>
+                      {fmt2(cpPH)} / {fmt2(cpDur)}
+                    </div>
+                  </div>
+                  {/* Scrubber */}
+                  {cpVer?.url && (
+                    <div style={{ background:"#111", padding:"10px 14px" }}>
+                      <div style={{ position:"relative", height:28, display:"flex", alignItems:"center", cursor:"pointer" }}
+                        onClick={e=>{const r=e.currentTarget.getBoundingClientRect();const t=Math.round(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*cpDur);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}}>
+                        <div style={{ position:"absolute", left:0, right:0, height:3, background:"rgba(255,255,255,.12)", borderRadius:99 }}>
+                          <div style={{ height:"100%", width:`${(cpPH/cpDur)*100}%`, background:C.accent, borderRadius:99 }}/>
+                        </div>
+                        {cpComments.map(c=>(
+                          <div key={c.id} style={{ position:"absolute", left:`${Math.min(99,(c.ts/cpDur)*100)}%`, width:8, height:8, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#8fa3b5", transform:"translateX(-50%)", zIndex:4, opacity:c.resolved?.4:1 }}/>
+                        ))}
+                        <div style={{ position:"absolute", left:`${(cpPH/cpDur)*100}%`, width:12, height:12, borderRadius:"50%", background:"#fff", transform:"translateX(-50%)", boxShadow:"0 1px 5px rgba(0,0,0,.4)", zIndex:5 }}/>
+                      </div>
+                      <div style={{ display:"flex", gap:8, marginTop:4, alignItems:"center" }}>
+                        <button onClick={()=>{const t=Math.max(0,cpPH-10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.rewind} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+                        <button onClick={()=>{if(cpPlaying){cpVidRef.current?.pause();}else{cpVidRef.current?.play().catch(()=>{});}setCpPlaying(p=>!p);}} style={{ width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
+                          <Ic d={cpPlaying?P.pause:P.play} size={13} style={{ color:"#fff" }}/>
+                        </button>
+                        <button onClick={()=>{const t=Math.min(cpDur,cpPH+10);setCpPH(t);if(cpVidRef.current)cpVidRef.current.currentTime=t;}} style={{ background:"none",border:"none",cursor:"pointer" }}><Ic d={P.fwd} size={14} style={{ color:"rgba(255,255,255,.5)" }}/></button>
+                        <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.4)" }}>{fmt2(cpPH)} / {fmt2(cpDur)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Comments panel */}
+                <div>
+                  {/* Add comment */}
+                  <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.border}`, padding:14, marginBottom:12 }}>
+                    <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, margin:"0 0 8px" }}>Leave a note at {fmt2(cpPH)}</p>
+                    <textarea value={cpText} onChange={e=>setCpText(e.target.value)}
+                      placeholder="Pause the video at any moment and type your note here…"
+                      style={{ width:"100%", height:72, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
+                    <button onClick={addClientComment} disabled={!cpText.trim()}
+                      style={{ marginTop:8, width:"100%", padding:"8px 0", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:cpText.trim()?1:.5 }}>
+                      Add Note at {fmt2(cpPH)}
+                    </button>
+                  </div>
+                  {/* Comment list */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
+                    {cpComments.length===0 && <p style={{ fontSize:12, color:C.muted, textAlign:"center", padding:"20px 0" }}>No notes yet for this version.</p>}
+                    {[...cpComments].sort((a,b)=>a.ts-b.ts).map(c => (
+                      <div key={c.id} onClick={()=>{if(cpVidRef.current){cpVidRef.current.currentTime=c.ts;setCpPH(c.ts);}}}
+                        style={{ background:c.resolved?"#f9faf8":C.cream, border:`1.5px solid ${c.resolved?"#c3d9c3":C.border}`, borderRadius:10, padding:12, cursor:"pointer", opacity:c.resolved?.7:1 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                          <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+                            <div style={{ width:24, height:24, borderRadius:"50%", background:c.role==="client"?"#c4974a":"#7a8c9e", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{c.avatar}</div>
+                            <span style={{ fontSize:11, fontWeight:600, color:C.ink }}>{c.author}</span>
+                            <span style={{ fontFamily:"monospace", fontSize:10, fontWeight:700, color:"#fff", background:c.role==="client"?"#c4974a":"#7a8c9e", padding:"1px 6px", borderRadius:4 }}>{fmt2(c.ts)}</span>
+                          </div>
+                          {c.resolved && <span style={{ fontSize:10, color:C.green }}>✓ Resolved</span>}
+                        </div>
+                        <p style={{ fontSize:12, color:C.ink, margin:0, lineHeight:1.5, textDecoration:c.resolved?"line-through":"none" }}>{c.text}</p>
+                        {c.replies.length>0 && (
+                          <div style={{ borderLeft:`2px solid ${C.border}`, marginLeft:6, paddingLeft:8, marginTop:6 }}>
+                            {c.replies.map((r,i)=>(
+                              <div key={i} style={{ fontSize:11, color:C.ink, marginBottom:3 }}><strong>{r.author}:</strong> {r.text}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── PROGRESS ── */}
         {tab === "progress" && (
@@ -24322,7 +24704,9 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [appPackages,    setAppPackages]    = useState(INITIAL_SERVICE_PACKAGES);
   const [appSbFrames,    setAppSbFrames]    = useState([]);
   const [appSbMedia,     setAppSbMedia]     = useState([]);
-  const [galleryPhotos,  setGalleryPhotos]  = useState({}); // { [projId]: [{url,name}] }
+  const [galleryPhotos,        setGalleryPhotos]        = useState({}); // { [projId]: [{url,name}] }
+  const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
+  const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
 
   const userId = supabaseSession?.user?.id;
   const [dbLoaded, setDbLoaded] = useState(false);
@@ -24343,6 +24727,8 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.sb_frames    && data.sb_frames.length)    setAppSbFrames(data.sb_frames);
         if (data.sb_media     && data.sb_media.length)     setAppSbMedia(data.sb_media);
         if (data.gallery_photos && Object.keys(data.gallery_photos).length) setGalleryPhotos(data.gallery_photos);
+        if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
+        if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
       }
       setDbLoaded(true);
     });
@@ -24362,9 +24748,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
       packages:    appPackages,
       sb_frames:   appSbFrames,
       sb_media:    appSbMedia,
-      gallery_photos: galleryPhotos,
+      gallery_photos:       galleryPhotos,
+      video_deliverables:   appVideoDeliverables,
+      video_comments:       appVideoComments,
     });
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, dbLoaded]);
+  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, appVideoDeliverables, appVideoComments, dbLoaded]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
@@ -24410,7 +24798,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
@@ -24426,7 +24814,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices}/>,
+    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit}/>,
   };
 
