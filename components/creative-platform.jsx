@@ -3672,14 +3672,26 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         if (!error && data) {
           const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
           URL.revokeObjectURL(blobUrl);
-          setPhotos(prev => prev.map(ph =>
-            ph._tmpId === tmpId
-              ? { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" }
-              : ph
-          ));
-          // ↑ state update is async — use setTimeout(0) so React commits it first,
-          // then fire an immediate (non-debounced) save so logout can't race the debounce
-          setTimeout(() => { if (onPermanentSave) onPermanentSave(); }, 0);
+          // Capture the exact computed next-state from the functional updater.
+          // React calls functional updaters synchronously, so capturedNext is
+          // populated immediately — no stale-closure or timing issues.
+          let capturedNext = null;
+          setPhotos(prev => {
+            const next = prev.map(ph =>
+              ph._tmpId === tmpId
+                ? { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" }
+                : ph
+            );
+            capturedNext = next;
+            return next;
+          });
+          // Save immediately with only permanent URLs (no blobs, no uploading flags)
+          if (onPermanentSave && capturedNext) {
+            const permanentOnly = capturedNext.filter(
+              ph => ph.url && !ph.url.startsWith("blob:") && !ph.uploading
+            );
+            onPermanentSave(proj.id, permanentOnly);
+          }
         } else {
           setPhotos(prev => prev.map(ph =>
             ph._tmpId === tmpId ? { ...ph, uploading: false } : ph
@@ -5950,7 +5962,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         })()}
 
         {/* ── GALLERY ── */}
-        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))} onPermanentSave={saveNow}/>}
+        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))} onPermanentSave={persistGalleryNow}/>}
         {/* ── PLANNING ── */}
         {tab === "planning" && <ProjectPlanningTab proj={proj}/>}
 
@@ -24815,10 +24827,20 @@ function AppShell({ supabaseSession, supabaseClient }) {
     video_comments:     appVideoComments,
   };
 
-  // Immediate (non-debounced) save — call this whenever you can't wait 1.5s
+  // Immediate (non-debounced) save — used by logout handler
   const saveNow = useCallback(() => {
     if (!userId) return Promise.resolve();
     return _saveState(userId, _liveState.current);
+  }, [userId]);
+
+  // Called by ProjectGalleryTab the moment a file gets a permanent Supabase URL.
+  // We receive the exact computed photos array (captured from the functional setState
+  // updater, which runs synchronously — so we never read stale state from the ref).
+  const persistGalleryNow = useCallback((projId, photos) => {
+    if (!userId) return;
+    // Merge explicit photos for this project with live state for all other projects
+    const mergedGallery = { ..._liveState.current.gallery_photos, [projId]: photos };
+    _saveState(userId, { ..._liveState.current, gallery_photos: mergedGallery });
   }, [userId]);
 
   // ── Auto-save state changes (debounced) ────────────────────
