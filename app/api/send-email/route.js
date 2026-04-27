@@ -1,11 +1,10 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 // POST /api/send-email
 // Body: { to, subject, html, from?, replyTo?, attachments? }
 export async function POST(request) {
   try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
     const body = await request.json();
     const { to, subject, html, from, replyTo, attachments } = body;
 
