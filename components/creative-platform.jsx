@@ -24918,6 +24918,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.sb_frames    && data.sb_frames.length)    setAppSbFrames(data.sb_frames);
         if (data.sb_media     && data.sb_media.length)     setAppSbMedia(data.sb_media);
         if (data.gallery_photos && Object.keys(data.gallery_photos).length) setGalleryPhotos(data.gallery_photos);
+        if (data.gallery_delivery && Object.keys(data.gallery_delivery).length) setGalleryDelivery(data.gallery_delivery);
         if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
         if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
       }
@@ -24940,6 +24941,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     sb_frames:   appSbFrames,
     sb_media:    appSbMedia,
     gallery_photos:     galleryPhotos,
+    gallery_delivery:   galleryDelivery,
     video_deliverables: appVideoDeliverables,
     video_comments:     appVideoComments,
   };
@@ -24968,7 +24970,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   useEffect(() => {
     if (!dbLoaded || !userId) return;
     saveState(userId, _liveState.current);
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, appVideoDeliverables, appVideoComments, dbLoaded]);
+  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, dbLoaded]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
