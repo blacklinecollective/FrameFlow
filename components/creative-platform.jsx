@@ -2529,15 +2529,75 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
   const gd   = delivery || GALLERY_DELIVERY_SEED[proj.id] || GALLERY_DELIVERY_SEED[1] || { status:"draft", downloadEnabled:true, downloadType:"full", pinEnabled:false, selectionMode:"none" };
   const favs = clientFavorites || [];
   const flags= clientFlags     || [];
-  const [tab,     setTab]    = useState("settings"); // settings | analytics
-  const [saved,   setSaved]  = useState(false);
-  const [copied,  setCopied] = useState(false);
+  const [tab,        setTab]       = useState("settings"); // settings | analytics
+  const [saved,      setSaved]     = useState(false);
+  const [copied,     setCopied]    = useState(false);
+  const [showEmail,  setShowEmail] = useState(false);
+  const [clientEmail,setClientEmail]=useState(proj.clientEmail||"");
+  const [sendingEmail,setSendingEmail]=useState(false);
+  const [emailSent,  setEmailSent] = useState(false);
+
+  // Generate the real share link
+  const shareLink = typeof window !== "undefined"
+    ? `${window.location.origin}/client/${proj.id}`
+    : `/client/${proj.id}`;
+
   const update = (k,v) => setDelivery(p => ({ ...p, [k]:v }));
   const publish = () => {
     setDelivery(p => ({ ...p, status:"published", publishedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) }));
     setSaved(true); setTimeout(() => setSaved(false), 2400);
   };
   const unpublish = () => setDelivery(p => ({ ...p, status:"draft" }));
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(shareLink).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Fallback for browsers that block clipboard
+      const el = document.createElement("textarea");
+      el.value = shareLink; document.body.appendChild(el);
+      el.select(); document.execCommand("copy");
+      document.body.removeChild(el);
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const sendPortalEmail = async () => {
+    if (!clientEmail) return;
+    setSendingEmail(true);
+    const pinLine = gd.pinEnabled && gd.pin
+      ? `<p style="margin:0 0 8px"><strong>Your PIN:</strong> <span style="font-size:22px;letter-spacing:4px;font-weight:700">${gd.pin}</span></p>`
+      : "";
+    const html = `
+      <div style="font-family:Inter,sans-serif;max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e8e4df">
+        <div style="background:#1a1a1a;padding:28px 32px;text-align:center">
+          <h1 style="color:#fff;font-family:'Georgia',serif;font-size:26px;font-weight:500;margin:0">${gd.galleryTitle || proj.name + " — Your Gallery"}</h1>
+        </div>
+        <div style="padding:32px">
+          ${gd.message ? `<p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 24px">${gd.message}</p>` : ""}
+          <p style="font-size:14px;color:#888;margin:0 0 20px">Your gallery is ready to view. Click the button below to access it.</p>
+          ${pinLine}
+          <div style="text-align:center;margin:28px 0">
+            <a href="${shareLink}" style="display:inline-block;padding:14px 32px;background:#1a1a1a;color:#fff;text-decoration:none;border-radius:12px;font-size:14px;font-weight:700">View Your Gallery →</a>
+          </div>
+          <p style="font-size:12px;color:#aaa;text-align:center;margin:0">Or copy this link: <a href="${shareLink}" style="color:#1a1a1a">${shareLink}</a></p>
+        </div>
+      </div>
+    `;
+    try {
+      await fetch("/api/send-email", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ to: clientEmail, subject: `Your gallery is ready — ${proj.name}`, html })
+      });
+      setEmailSent(true);
+      setTimeout(() => { setEmailSent(false); setShowEmail(false); }, 3000);
+    } catch(e) { /* silent */ }
+    setSendingEmail(false);
+    // Mark as published too
+    publish();
+  };
+
   const inputS = { width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" };
 
   return (
@@ -2626,14 +2686,37 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
 
               {/* Gallery link */}
               <div>
-                <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.5, color:C.muted, margin:"0 0 8px" }}>Gallery Link</p>
-                <div style={{ display:"flex", gap:8 }}>
-                  <div style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, color:C.muted, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{gd.shareLink}</div>
-                  <button onClick={() => { setCopied(true); setTimeout(()=>setCopied(false),2000); }}
+                <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.5, color:C.muted, margin:"0 0 8px" }}>Client Portal Link</p>
+                <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                  <div style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, color:C.muted, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{shareLink}</div>
+                  <button onClick={copyLink}
                     style={{ padding:"9px 16px", background:copied?C.green:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"background .2s" }}>
-                    {copied ? "Copied!" : "Copy"}
+                    {copied ? "✓ Copied!" : "Copy"}
                   </button>
                 </div>
+                {/* Send via email */}
+                {!showEmail ? (
+                  <button onClick={() => setShowEmail(true)}
+                    style={{ width:"100%", padding:"9px 0", background:"#fff", border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.ink, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    Send via Email
+                  </button>
+                ) : (
+                  <div style={{ background:C.cream, borderRadius:10, padding:14, border:`1px solid ${C.border}` }}>
+                    <label style={{ fontSize:11, color:C.muted, display:"block", marginBottom:5 }}>Client Email Address</label>
+                    <input type="email" value={clientEmail} onChange={e=>setClientEmail(e.target.value)} placeholder="client@email.com" style={{ ...inputS, marginBottom:8 }}/>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={sendPortalEmail} disabled={!clientEmail||sendingEmail}
+                        style={{ flex:2, padding:"9px 0", background: emailSent?C.green : (clientEmail&&!sendingEmail?C.ink:"#ccc"), color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor: clientEmail&&!sendingEmail?"pointer":"default", transition:"background .2s" }}>
+                        {emailSent ? "✓ Sent!" : sendingEmail ? "Sending…" : "Send Portal Link"}
+                      </button>
+                      <button onClick={() => setShowEmail(false)} style={{ flex:1, padding:"9px 0", background:"#fff", border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, cursor:"pointer", color:C.muted }}>
+                        Cancel
+                      </button>
+                    </div>
+                    {gd.pinEnabled && gd.pin && <p style={{ fontSize:11, color:C.muted, margin:"8px 0 0" }}>PIN {gd.pin} will be included in the email.</p>}
+                  </div>
+                )}
               </div>
 
               {/* Personal message */}
@@ -2863,26 +2946,28 @@ const GalleryDeliveryPanel = ({ proj, delivery, setDelivery, clientFavorites, cl
         </div>
 
         {/* Footer actions */}
-        <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`, flexShrink:0, display:"flex", gap:8 }}>
-          {gd.status === "draft" ? (
-            <button onClick={publish}
-              style={{ flex:1, padding:"12px 0", background:C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7 }}>
-              {saved
-                ? <><Ic d={P.check} size={13} style={{ color:"#fff" }}/> Gallery Published!</>
-                : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Publish &amp; Notify Client</>}
-            </button>
-          ) : (
-            <>
-              <button onClick={publish}
-                style={{ flex:2, padding:"12px 0", background:C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-                {saved ? "✓ Saved!" : "Save Changes"}
+        <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`, flexShrink:0, display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ display:"flex", gap:8 }}>
+            {gd.status === "draft" ? (
+              <button onClick={() => { publish(); setShowEmail(true); }}
+                style={{ flex:1, padding:"12px 0", background:C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7 }}>
+                {saved
+                  ? <><Ic d={P.check} size={13} style={{ color:"#fff" }}/> Published!</>
+                  : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Publish &amp; Send to Client</>}
               </button>
-              <button onClick={unpublish}
-                style={{ flex:1, padding:"12px 0", background:"#fff", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, cursor:"pointer", color:C.muted }}>
-                Unpublish
-              </button>
-            </>
-          )}
+            ) : (
+              <>
+                <button onClick={publish}
+                  style={{ flex:2, padding:"12px 0", background:C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  {saved ? "✓ Saved!" : "Save Changes"}
+                </button>
+                <button onClick={unpublish}
+                  style={{ flex:1, padding:"12px 0", background:"#fff", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, cursor:"pointer", color:C.muted }}>
+                  Unpublish
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
