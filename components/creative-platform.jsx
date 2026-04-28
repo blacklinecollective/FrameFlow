@@ -24193,12 +24193,14 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     return () => clearInterval(iv);
   }, [proj?.id]);
 
+  // Portal preview sends as the CLIENT (simulating what Mike would send)
   const sendMsg = async () => {
     if (!msgDraft.trim()) return;
+    const clientName = proj.client || "Client";
     const msg = {
       id:         "msg_" + Date.now(),
-      from:       "studio",
-      senderName: myName,
+      from:       "client",
+      senderName: clientName,
       text:       msgDraft.trim(),
       ts:         new Date().toISOString(),
     };
