@@ -4926,7 +4926,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, appProjMessages, setAppProjMessages }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -4971,8 +4971,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [msgDraft,   setMsgDraft]  = useState("");
   const [threads,    setThreads]   = useState(MESSAGES);
   const [contracts,  setContracts] = useState(INITIAL_CONTRACTS);
-  const [groupThreads, setGroupThreads] = useState(GROUP_THREADS);
-  const [activeChat, setActiveChat] = useState(null); // thread id within group threads
+  const [activeChat, setActiveChat] = useState(null); // not used for real threads anymore, kept for compat
   const [showAddContact, setShowAddContact] = useState(false);
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
@@ -5099,9 +5098,6 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const selectProject = (id) => {
     setSel(id);
     setTab("overview");
-    // default to first thread for this project
-    const first = (GROUP_THREADS[id] || [])[0];
-    setActiveChat(first?.id || null);
   };
 
   // Consume deep-link navigation from Dashboard
@@ -5109,11 +5105,31 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     if (deepLink?.id) {
       setSel(deepLink.id);
       setTab(deepLink.tab || "overview");
-      const first = (GROUP_THREADS[deepLink.id] || [])[0];
-      setActiveChat(first?.id || null);
       if (clearDeepLink) clearDeepLink();
     }
   }, [deepLink]);
+
+  // ── Poll for new client messages every 6 seconds when messages tab is open ──
+  useEffect(() => {
+    if (!sel || tab !== "messages") return;
+    const poll = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user?.id) return;
+        const { data } = await supabase
+          .from("app_state")
+          .select("proj_messages")
+          .eq("user_id", session.user.id)
+          .single();
+        if (data?.proj_messages && setAppProjMessages) {
+          setAppProjMessages(data.proj_messages);
+        }
+      } catch (_) {}
+    };
+    poll();
+    const iv = setInterval(poll, 6000);
+    return () => clearInterval(iv);
+  }, [sel, tab]);
 
   if (proj) {
     const msgThread = threads.find(m => m.project === proj.name);
@@ -5152,18 +5168,22 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     const activeGroup = getGroupId(tab);
     const activeGroupData = TAB_GROUPS.find(g => g.id === activeGroup);
 
-    const projGroupThreads = groupThreads[proj.id] || [];
-    const curChatThread = projGroupThreads.find(t => t.id === activeChat) || projGroupThreads[0];
+    // ── Real persisted messages for this project ──
+    const projMessages = (appProjMessages || {})[proj.id] || [];
 
     const sendMsg = () => {
-      if (!msgDraft.trim() || !curChatThread) return;
-      setGroupThreads(prev => ({
-        ...prev,
-        [proj.id]: prev[proj.id].map(t => t.id === curChatThread.id
-          ? { ...t, thread:[...t.thread, { from:"me", sender:"Me", text:msgDraft, time:"Now" }] }
-          : t
-        )
-      }));
+      if (!msgDraft.trim()) return;
+      const msg = {
+        id:         "msg_" + Date.now(),
+        from:       "studio",
+        senderName: "Studio",
+        text:       msgDraft.trim(),
+        ts:         new Date().toISOString(),
+      };
+      const updatedMsgs = [...projMessages, msg];
+      if (setAppProjMessages) {
+        setAppProjMessages(prev => ({ ...prev, [proj.id]: updatedMsgs }));
+      }
       setMsgDraft("");
     };
 
@@ -5771,85 +5791,67 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
         {/* ── MESSAGES ── */}
         {tab === "messages" && (
-          <Card style={{ display:"flex", height:560, overflow:"hidden" }}>
-            {/* Left: thread list */}
-            <div style={{ width:220, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", flexShrink:0 }}>
-              <div style={{ padding:"14px 14px 10px", borderBottom:`1px solid ${C.border}` }}>
-                <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:"0 0 2px" }}>Conversations</p>
-                <p style={{ fontSize:11, color:C.muted, margin:0 }}>{proj.name}</p>
+          <Card style={{ display:"flex", flexDirection:"column", height:580, overflow:"hidden" }}>
+            {/* Header */}
+            <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+              <div style={{ width:38, height:38, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a1a,#3a3a3a)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, flexShrink:0 }}>
+                {(proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("")}
               </div>
-              <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"8px 8px" }}>
-                {projGroupThreads.map(t => {
-                  const isActive = curChatThread?.id === t.id;
-                  const lastMsg = t.thread[t.thread.length-1];
-                  return (
-                    <button key={t.id} onClick={()=>setActiveChat(t.id)}
-                      style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 10px", borderRadius:10, border:"none", cursor:"pointer", background: isActive?"#1a1a1a":"transparent", textAlign:"left", marginBottom:2 }}>
-                      <div style={{ width:36, height:36, borderRadius:"50%", background: t.isGroup?"linear-gradient(135deg,#ddd6cc,#cec7bc)":"linear-gradient(135deg,#e8e4df,#d5cfc9)", display:"flex", alignItems:"center", justifyContent:"center", fontSize: t.isGroup?16:12, fontWeight:600, color: C.ink, flexShrink:0, position:"relative" }}>
-                        {t.isGroup ? t.avatar : t.avatar}
-                        {t.isGroup && <div style={{ position:"absolute", bottom:-2, right:-2, width:14, height:14, background:C.green, borderRadius:"50%", border:"2px solid #fff", display:"flex", alignItems:"center", justifyContent:"center" }}><svg width={7} height={7} viewBox="0 0 24 24" fill="#fff"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>}
-                      </div>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <p style={{ fontSize:12, fontWeight:600, color: isActive?"#fff":C.ink, margin:0, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{t.name}</p>
-                        <p style={{ fontSize:11, color: isActive?"rgba(255,255,255,.5)":C.muted, margin:"2px 0 0", overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{lastMsg?.text || "No messages yet"}</p>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div style={{ flex:1 }}>
+                <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{proj.client || "Client"}</p>
+                <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{proj.name} · Client Portal Thread</p>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:C.muted }}>Auto-syncing</span>
+                <div style={{ width:8, height:8, borderRadius:"50%", background:C.green }}/>
               </div>
             </div>
 
-            {/* Right: active chat */}
-            <div style={{ flex:1, display:"flex", flexDirection:"column" }}>
-              {curChatThread ? <>
-                <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ width:36, height:36, borderRadius:"50%", background: curChatThread.isGroup?"linear-gradient(135deg,#ddd6cc,#cec7bc)":"#1a1a1a", color: curChatThread.isGroup?C.ink:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize: curChatThread.isGroup?16:12, fontWeight:600 }}>
-                    {curChatThread.avatar}
+            {/* Message list */}
+            <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 20px", background:C.cream, display:"flex", flexDirection:"column", gap:12 }}>
+              {projMessages.length === 0 && (
+                <div style={{ textAlign:"center", padding:"48px 24px" }}>
+                  <div style={{ width:52, height:52, borderRadius:"50%", background:"#e8e4df", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
+                    <Ic d={P.msg} size={22} style={{ color:C.muted }}/>
                   </div>
-                  <div>
-                    <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{curChatThread.name}</p>
-                    <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{curChatThread.isGroup ? `${curChatThread.avatars.length} participants` : "Direct message"}</p>
-                  </div>
-                  {curChatThread.isGroup && (
-                    <div style={{ marginLeft:"auto", display:"flex", gap:-8 }}>
-                      {curChatThread.avatars.map((av,i) => (
-                        <div key={i} style={{ width:26, height:26, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:600, border:"2px solid #fff", marginLeft: i>0?-8:0 }}>{av}</div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ marginLeft: curChatThread.isGroup?"8px":"auto" }}><Btn variant="secondary" icon="bell" style={{ fontSize:12 }}>Notify All</Btn></div>
+                  <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 6px" }}>No messages yet</p>
+                  <p style={{ fontSize:12, color:C.muted, margin:0 }}>Send a message to start the conversation with {proj.client||"your client"}</p>
                 </div>
-                <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:20, background:C.cream, display:"flex", flexDirection:"column", gap:12 }}>
-                  {curChatThread.thread.map((msg,i) => (
-                    <div key={i} style={{ display:"flex", justifyContent: msg.from==="me" ? "flex-end" : "flex-start", flexDirection:"column", alignItems: msg.from==="me"?"flex-end":"flex-start" }}>
-                      {msg.from!=="me" && curChatThread.isGroup && (
-                        <p style={{ fontSize:10, color:C.muted, margin:"0 0 3px 42px", fontWeight:500 }}>{msg.sender}</p>
-                      )}
-                      <div style={{ display:"flex", alignItems:"flex-end", gap:8, flexDirection: msg.from==="me"?"row-reverse":"row" }}>
-                        {msg.from!=="me" && (
-                          <div style={{ width:28, height:28, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:600, flexShrink:0 }}>
-                            {msg.sender?.split(" ").map(w=>w[0]).slice(0,2).join("")}
-                          </div>
-                        )}
-                        <div style={{ maxWidth:380, padding:"11px 16px", borderRadius:16, fontSize:13, lineHeight:1.6, background: msg.from==="me" ? C.ink : "#fff", color: msg.from==="me" ? "#fff" : C.ink, border: msg.from==="me" ? "none" : `1px solid ${C.border}` }}>
-                          <p style={{ margin:0 }}>{msg.text}</p>
-                          <p style={{ fontSize:10, marginTop:4, opacity:.5, margin:0 }}>{msg.time}</p>
-                        </div>
+              )}
+              {projMessages.map((msg, i) => {
+                const isStudio = msg.from === "studio";
+                const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "Now";
+                return (
+                  <div key={msg.id || i} style={{ display:"flex", justifyContent: isStudio?"flex-end":"flex-start", alignItems:"flex-end", gap:8 }}>
+                    {!isStudio && (
+                      <div style={{ width:28, height:28, borderRadius:"50%", background:"linear-gradient(135deg,#b8976a,#c9a87b)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:600, flexShrink:0 }}>
+                        {(proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("")}
                       </div>
+                    )}
+                    <div style={{ maxWidth:400, padding:"11px 16px", borderRadius:16, borderBottomRightRadius: isStudio?4:16, borderBottomLeftRadius: isStudio?16:4, fontSize:13, lineHeight:1.6, background: isStudio?C.ink:"#fff", color: isStudio?"#fff":C.ink, border: isStudio?"none":`1px solid ${C.border}` }}>
+                      {!isStudio && <p style={{ fontSize:10, fontWeight:600, color:"#b8976a", margin:"0 0 4px", textTransform:"uppercase", letterSpacing:.4 }}>{msg.senderName || "Client"}</p>}
+                      <p style={{ margin:0 }}>{msg.text}</p>
+                      <p style={{ fontSize:10, opacity:.55, margin:"5px 0 0", textAlign: isStudio?"right":"left" }}>{timeStr}</p>
                     </div>
-                  ))}
-                </div>
-                <div style={{ padding:"12px 16px", borderTop:`1px solid ${C.border}`, background:"#fff" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8, background:C.cream, borderRadius:12, padding:"8px 12px", border:`1px solid ${C.border}` }}>
-                    <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()}
-                      placeholder={`Message ${curChatThread.name}…`}
-                      style={{ flex:1, background:"transparent", border:"none", fontSize:13, color:C.ink }}/>
-                    <button onClick={sendMsg} style={{ width:32, height:32, borderRadius:8, background:C.ink, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                      <Ic d={P.send} size={13} style={{ color:"#fff" }}/>
-                    </button>
                   </div>
-                </div>
-              </> : <p style={{ color:C.muted, fontSize:13, textAlign:"center", paddingTop:60 }}>Select a conversation</p>}
+                );
+              })}
+            </div>
+
+            {/* Compose */}
+            <div style={{ padding:"12px 16px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, background:C.cream, borderRadius:12, padding:"8px 8px 8px 14px", border:`1px solid ${C.border}` }}>
+                <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                  placeholder={`Message ${proj.client||"client"}…`}
+                  style={{ flex:1, background:"transparent", border:"none", fontSize:13, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                <button onClick={sendMsg}
+                  disabled={!msgDraft.trim()}
+                  style={{ width:36, height:36, borderRadius:9, background: msgDraft.trim()?C.ink:"#ccc", border:"none", cursor: msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                  <Ic d={P.send} size={14} style={{ color:"#fff" }}/>
+                </button>
+              </div>
+              <p style={{ fontSize:11, color:C.muted, margin:"6px 0 0", textAlign:"center" }}>Client receives messages in their portal · Replies appear here automatically</p>
             </div>
           </Card>
         )}
@@ -25115,6 +25117,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [galleryPhotos,        setGalleryPhotos]        = useState({}); // { [projId]: [{url,name}] }
   const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
   const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
+  const [appProjMessages,      setAppProjMessages]      = useState({}); // { [projId]: [{id,from,senderName,text,ts}] }
 
   const userId = supabaseSession?.user?.id;
   const [dbLoaded, setDbLoaded] = useState(false);
@@ -25138,6 +25141,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.gallery_delivery && Object.keys(data.gallery_delivery).length) setGalleryDelivery(data.gallery_delivery);
         if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
         if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
+        if (data.proj_messages && Object.keys(data.proj_messages).length) setAppProjMessages(data.proj_messages);
       }
       setDbLoaded(true);
     });
@@ -25161,6 +25165,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     gallery_delivery:   galleryDelivery,
     video_deliverables: appVideoDeliverables,
     video_comments:     appVideoComments,
+    proj_messages:      appProjMessages,
   };
 
   // Immediate (non-debounced) save — used by logout handler
@@ -25187,7 +25192,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   useEffect(() => {
     if (!dbLoaded || !userId) return;
     saveState(userId, _liveState.current);
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, dbLoaded]);
+  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, appProjMessages, dbLoaded]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
@@ -25233,7 +25238,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} appProjMessages={appProjMessages} setAppProjMessages={setAppProjMessages}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,

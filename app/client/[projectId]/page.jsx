@@ -396,13 +396,15 @@ export default function ClientPortalPage({ params }) {
   const [tab,      setTab]      = useState("gallery");
   const [favs,     setFavs]     = useState([]);
   const [lightbox, setLightbox] = useState(null);
-  const [msgDraft, setMsgDraft] = useState("");
-  const [msgs,     setMsgs]     = useState([]);
-  const [msgSent,  setMsgSent]  = useState(false);
+  const [msgDraft,  setMsgDraft]  = useState("");
+  const [msgs,      setMsgs]      = useState([]);
+  const [msgSent,   setMsgSent]   = useState(false);
+  const [msgSending,setMsgSending]= useState(false);
   const [payModal,  setPayModal]  = useState(null);  // invoice being paid
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
   const sbRef = useRef(null);
+  const msgEndRef = useRef(null);
 
   useEffect(() => {
     if (!projectId || isNaN(projectId)) { setNotFound(true); setLoading(false); return; }
@@ -420,6 +422,7 @@ export default function ClientPortalPage({ params }) {
         if (!delivery.published) { setNotReady(true); setLoading(false); return; }
         if (delivery.expiryEnabled && delivery.expiryDate && new Date(delivery.expiryDate) < new Date()) { setExpired(true); setLoading(false); return; }
         if (!delivery.pinEnabled) setUnlocked(true);
+        if (Array.isArray(result.messages)) setMsgs(result.messages);
         setData(result);
         setLoading(false);
       } catch(err) {
@@ -431,6 +434,30 @@ export default function ClientPortalPage({ params }) {
     load();
     return () => { cancelled = true; };
   }, [projectId]);
+
+  // ── Poll for new studio messages every 6 seconds when messages tab is open ──
+  useEffect(() => {
+    if (!data || tab !== "messages") return;
+    const poll = async () => {
+      try {
+        const sb = sbRef.current;
+        if (!sb) return;
+        const { data: result } = await sb.rpc("get_client_portal_data", { p_project_id: Number(projectId) });
+        if (result && Array.isArray(result.messages)) {
+          setMsgs(result.messages);
+        }
+      } catch (_) {}
+    };
+    const iv = setInterval(poll, 6000);
+    return () => clearInterval(iv);
+  }, [data, tab, projectId]);
+
+  // Scroll to bottom when messages update
+  useEffect(() => {
+    if (msgEndRef.current) {
+      msgEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [msgs]);
 
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream }}>
@@ -509,11 +536,33 @@ export default function ClientPortalPage({ params }) {
   const openInvoices = invoices.filter(i => i.status !== "Paid");
   const totalDue = openInvoices.reduce((s, i) => s + (Number(i.total)||0), 0);
 
-  const sendMsg = () => {
-    if (!msgDraft.trim()) return;
-    setMsgs(prev => [...prev, { from:"client", text:msgDraft.trim(), time:"Now" }]);
-    setMsgDraft(""); setMsgSent(true);
-    setTimeout(() => setMsgSent(false), 3000);
+  // ── Send message to photographer ────────────────────────────────────────────
+  const sendMsg = async () => {
+    const text = msgDraft.trim();
+    if (!text || msgSending) return;
+    setMsgSending(true);
+    const msg = {
+      id:         "msg_" + Date.now(),
+      from:       "client",
+      senderName: project?.client || "Client",
+      text,
+      ts:         new Date().toISOString(),
+    };
+    // Optimistically add to UI
+    setMsgs(prev => [...prev, msg]);
+    setMsgDraft("");
+    try {
+      const sb = sbRef.current;
+      if (sb) {
+        await sb.rpc("send_client_message", {
+          p_project_id: Number(projectId),
+          p_message:    msg,
+        });
+        setMsgSent(true);
+        setTimeout(() => setMsgSent(false), 3000);
+      }
+    } catch (_) {}
+    setMsgSending(false);
   };
 
   return (
@@ -712,28 +761,67 @@ export default function ClientPortalPage({ params }) {
 
       {/* ── Messages tab ── */}
       {tab === "messages" && (
-        <div style={{ maxWidth:600, margin:"0 auto", padding:"40px 24px", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
-          <h2 style={{ fontSize:22, fontWeight:700, color:fg, margin:"0 0 6px" }}>Messages</h2>
-          <p style={{ fontSize:13, color:sub, margin:"0 0 20px" }}>Send a note to {studioName}</p>
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:12, marginBottom:16 }}>
-            {msgs.length === 0 && <div style={{ textAlign:"center", padding:"32px 0", color:sub }}><p style={{ fontSize:14 }}>No messages yet. Say hello!</p></div>}
-            {msgs.map((m, idx) => (
-              <div key={idx} style={{ display:"flex", justifyContent:m.from==="client"?"flex-end":"flex-start" }}>
-                <div style={{ maxWidth:"75%", padding:"10px 14px", borderRadius:14, background:m.from==="client"?brandColor:(dark?"rgba(255,255,255,.08)":C.warm), color:m.from==="client"?"#fff":fg }}>
-                  <p style={{ fontSize:13, lineHeight:1.5, margin:0 }}>{m.text}</p>
-                  <p style={{ fontSize:10, opacity:.6, margin:"4px 0 0", textAlign:"right" }}>{m.time}</p>
-                </div>
+        <div style={{ maxWidth:640, margin:"0 auto", padding:"24px 24px 0", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
+          {/* Header */}
+          <div style={{ display:"flex", alignItems:"center", gap:12, paddingBottom:16, borderBottom:`1px solid ${brd}`, flexShrink:0 }}>
+            <div style={{ width:42, height:42, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:700, flexShrink:0 }}>
+              {studioName.split(" ").map(w=>w[0]).slice(0,2).join("")}
+            </div>
+            <div style={{ flex:1 }}>
+              <p style={{ fontSize:15, fontWeight:700, color:fg, margin:0 }}>{studioName}</p>
+              <p style={{ fontSize:12, color:sub, margin:"2px 0 0" }}>Replies typically within 24 hours</p>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:C.green }}/>
+              <span style={{ fontSize:11, color:sub }}>Live</span>
+            </div>
+          </div>
+
+          {/* Message list */}
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:12, padding:"16px 0", marginBottom:0 }}>
+            {msgs.length === 0 && (
+              <div style={{ textAlign:"center", padding:"48px 0", color:sub }}>
+                <div style={{ fontSize:36, marginBottom:12 }}>💬</div>
+                <p style={{ fontSize:15, fontWeight:600, color:fg, margin:"0 0 6px" }}>Start the conversation</p>
+                <p style={{ fontSize:13, color:sub, margin:0 }}>Send a message to {studioName}</p>
               </div>
-            ))}
+            )}
+            {msgs.map((m, idx) => {
+              const isClient = m.from === "client";
+              const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time || "");
+              return (
+                <div key={m.id || idx} style={{ display:"flex", justifyContent:isClient?"flex-end":"flex-start", alignItems:"flex-end", gap:8 }}>
+                  {!isClient && (
+                    <div style={{ width:30, height:30, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
+                      {studioName.split(" ").map(w=>w[0]).slice(0,2).join("")}
+                    </div>
+                  )}
+                  <div style={{ maxWidth:"72%", padding:"11px 15px", borderRadius:16, borderBottomRightRadius:isClient?4:16, borderBottomLeftRadius:isClient?16:4, background:isClient?brandColor:(dark?"rgba(255,255,255,.1)":C.warm), color:isClient?"#fff":fg }}>
+                    {!isClient && <p style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:.4, margin:"0 0 4px", opacity:.7 }}>{m.senderName || studioName}</p>}
+                    <p style={{ fontSize:13, lineHeight:1.55, margin:0 }}>{m.text}</p>
+                    <p style={{ fontSize:10, opacity:.55, margin:"5px 0 0", textAlign:isClient?"right":"left" }}>{timeStr}</p>
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={msgEndRef}/>
           </div>
-          <div style={{ display:"flex", gap:10, flexShrink:0 }}>
-            <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
-              onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMsg()}
-              placeholder={`Message ${studioName}…`}
-              style={{ flex:1, padding:"12px 16px", border:`1px solid ${brd}`, borderRadius:12, fontSize:13, color:fg, background:dark?"rgba(255,255,255,.07)":C.cream, outline:"none", fontFamily:"inherit" }}/>
-            <button onClick={sendMsg} style={{ padding:"12px 18px", background:brandColor, color:"#fff", border:"none", borderRadius:12, fontSize:13, fontWeight:600, cursor:"pointer" }}>Send</button>
+
+          {/* Compose */}
+          <div style={{ borderTop:`1px solid ${brd}`, padding:"12px 0 16px", flexShrink:0 }}>
+            <div style={{ display:"flex", gap:10 }}>
+              <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
+                onKeyDown={e => { if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                disabled={msgSending}
+                placeholder={`Message ${studioName}…`}
+                style={{ flex:1, padding:"12px 16px", border:`1px solid ${brd}`, borderRadius:12, fontSize:13, color:fg, background:dark?"rgba(255,255,255,.07)":C.cream, outline:"none", fontFamily:"inherit", opacity:msgSending?.6:1 }}/>
+              <button onClick={sendMsg} disabled={!msgDraft.trim() || msgSending}
+                style={{ padding:"12px 20px", background:msgDraft.trim()&&!msgSending?brandColor:"#ccc", color:"#fff", border:"none", borderRadius:12, fontSize:13, fontWeight:600, cursor:msgDraft.trim()&&!msgSending?"pointer":"default", transition:"background .15s", flexShrink:0 }}>
+                {msgSending ? "…" : "Send"}
+              </button>
+            </div>
+            {msgSent && <p style={{ fontSize:12, color:C.green, marginTop:8, textAlign:"center" }}>✓ Message sent!</p>}
           </div>
-          {msgSent && <p style={{ fontSize:12, color:C.green, marginTop:8, textAlign:"center" }}>Message sent! We'll get back to you soon.</p>}
         </div>
       )}
 
