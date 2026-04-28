@@ -24423,6 +24423,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   };
 
   const deletePortalThread = async (tid) => {
+    // Remove from local state immediately
     setPortalThreads(prev => {
       const next = { ...prev };
       delete next[tid];
@@ -24432,6 +24433,28 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
       const remaining = Object.keys(portalThreads).filter(id => id !== tid);
       setSelPortalThread(remaining[0] || null);
     }
+    // Persist deletion to DB so polling doesn't bring it back
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        const { data } = await supabase
+          .from("app_state")
+          .select("proj_messages")
+          .eq("user_id", session.user.id)
+          .single();
+        if (data?.proj_messages) {
+          const updated = { ...data.proj_messages };
+          if (updated[proj.id] && typeof updated[proj.id] === "object" && !Array.isArray(updated[proj.id])) {
+            updated[proj.id] = { ...updated[proj.id] };
+            delete updated[proj.id][tid];
+          }
+          await supabase
+            .from("app_state")
+            .update({ proj_messages: updated, updated_at: new Date().toISOString() })
+            .eq("user_id", session.user.id);
+        }
+      }
+    } catch (_) {}
   };
 
   const contracts  = INITIAL_CONTRACTS.filter(c => c.project === proj.name);
