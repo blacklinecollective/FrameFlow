@@ -24123,7 +24123,7 @@ const ClientPortalVideoTab = ({ proj, appVideoDeliverables, appVideoComments, se
   );
 };
 
-const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook, galleryDelivery, clientFavorites, setClientFavorites, clientFlags, setClientFlags, appProjects, galleryPhotos, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, supabaseSession }) => {
   const allProjects = (appProjects && appProjects.length > 0) ? appProjects : PROJECTS;
   const proj       = allProjects.find(p => p.id === projId) || allProjects[0];
   if (!proj) return (
@@ -24135,6 +24135,8 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   );
   const photos     = PHOTOS[proj.id] || [];
   const invoices   = (appInvoices || []).filter(i => i.project === proj.name || i.projId === proj.id);
+  // Photographer's real name for message sender labels
+  const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const [tab,      setTab]      = useState("home");
   const [msgDraft, setMsgDraft] = useState("");
   const [msgs,     setMsgs]     = useState([]);
@@ -24196,7 +24198,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     const msg = {
       id:         "msg_" + Date.now(),
       from:       "studio",
-      senderName: "Studio",
+      senderName: myName,
       text:       msgDraft.trim(),
       ts:         new Date().toISOString(),
     };
@@ -24883,63 +24885,102 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
           </div>
         )}
 
-        {tab === "messages" && (
-          <div style={{ maxWidth:640 }}>
-            <div style={{ marginBottom:24 }}>
-              <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Messages</h2>
-              <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Your conversation with {studioName}</p>
-            </div>
-            <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden" }}>
-              {/* Photographer info */}
-              <div style={{ padding:"16px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, background:C.cream }}>
-                <div style={{ width:36, height:36, borderRadius:"50%", background:C.dark, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Ic d={P.image} size={14} style={{ color:accent }}/>
-                </div>
-                <div>
-                  <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{studioName}</p>
-                  <p style={{ fontSize:11, color:C.green, margin:0, display:"flex", alignItems:"center", gap:4 }}>
-                    <span style={{ width:6, height:6, borderRadius:"50%", background:C.green, display:"inline-block" }}/>
-                    Online · usually replies within a few hours
-                  </p>
-                </div>
+        {tab === "messages" && (() => {
+          const clientName    = proj.client || "Client";
+          const clientInitials = clientName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+          const myInitials    = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+          // Group consecutive messages for bubble tails
+          const grouped = msgs.reduce((acc, msg, i) => {
+            const prev = msgs[i-1];
+            const next = msgs[i+1];
+            const isFirst = !prev || prev.from !== msg.from;
+            const isLast  = !next  || next.from  !== msg.from;
+            return [...acc, { ...msg, isFirst, isLast }];
+          }, []);
+          return (
+            <div style={{ maxWidth:640 }}>
+              <div style={{ marginBottom:24 }}>
+                <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Messages</h2>
+                <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Conversation with {clientName} — preview of client view</p>
               </div>
-              {/* Messages */}
-              <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14, minHeight:320, maxHeight:400, overflowY:"auto" }}>
-                {msgs.length === 0 && (
-                  <div style={{ textAlign:"center", padding:"32px 0", color:C.muted }}>
-                    <p style={{ fontSize:13, margin:0 }}>No messages yet. Start the conversation!</p>
+              <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+                {/* Header */}
+                <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, background:"#f9f9f9" }}>
+                  <div style={{ width:36, height:36, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff" }}>{clientInitials}</div>
+                  <div>
+                    <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{clientName}</p>
+                    <p style={{ fontSize:11, color:"#34c759", margin:0 }}>● Active now</p>
                   </div>
-                )}
-                {msgs.map((m,i) => {
-                  const isStudio = m.from === "studio";
-                  const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time || "");
-                  return (
-                    <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:isStudio?"flex-start":"flex-end" }}>
-                      {isStudio && <span style={{ fontSize:10, fontWeight:600, color:accent, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Studio</span>}
-                      <div style={{ maxWidth:"75%", padding:"12px 16px", borderRadius:isStudio?"16px 16px 16px 4px":"16px 16px 4px 16px",
-                        background:isStudio?C.cream:accent,
-                        color:isStudio?C.ink:"#fff", fontSize:14, lineHeight:1.6 }}>
-                        {m.text}
-                      </div>
-                      <span style={{ fontSize:10, color:C.muted, marginTop:4 }}>{timeStr}</span>
+                </div>
+                {/* Messages */}
+                <div style={{ padding:"16px 20px", display:"flex", flexDirection:"column", minHeight:300, maxHeight:420, overflowY:"auto" }}>
+                  {grouped.length === 0 && (
+                    <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
+                      <p style={{ fontSize:13, margin:0 }}>No messages yet. Start the conversation!</p>
                     </div>
-                  );
-                })}
-              </div>
-              {/* Input */}
-              <div style={{ padding:"14px 16px", borderTop:`1px solid ${C.border}`, display:"flex", gap:10 }}>
-                <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&sendMsg()}
-                  placeholder="Type a message…"
-                  style={{ flex:1, fontSize:13, padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, outline:"none", background:C.cream }}/>
-                <button onClick={sendMsg}
-                  style={{ width:42, height:42, borderRadius:10, background:accent, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                  <Ic d={P.send||P.arrow} size={16} style={{ color:"#fff" }}/>
-                </button>
+                  )}
+                  {grouped.map((m, i) => {
+                    // From photographer's perspective in preview: studio = me (right), client = them (left)
+                    const isMe = m.from === "studio";
+                    const showAvatar = !isMe && m.isLast;
+                    const showName   = !isMe && m.isFirst;
+                    const showTime   = m.isLast;
+                    const timeStr    = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
+                    const br = { tl:18, tr:18, br:18, bl:18 };
+                    if (isMe)  br.br = m.isLast ? 4 : 18;
+                    else       br.bl = m.isLast ? 4 : 18;
+                    return (
+                      <div key={m.id||i}>
+                        {showName && (
+                          <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{m.senderName || clientName}</p>
+                        )}
+                        <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom: m.isLast?2:1 }}>
+                          {/* Avatar — left side for client messages */}
+                          <div style={{ width:32, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                            {showAvatar && (
+                              <div style={{ width:32, height:32, borderRadius:"50%", background:C.dark, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:accent }}>{clientInitials}</div>
+                            )}
+                          </div>
+                          <div style={{
+                            maxWidth:"68%", padding:"10px 14px",
+                            borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                            background: isMe ? "#007AFF" : "#E9E9EB",
+                            color: isMe ? "#fff" : C.ink,
+                            fontSize:14, lineHeight:1.5, wordBreak:"break-word",
+                          }}>
+                            {m.text}
+                          </div>
+                          {/* Avatar placeholder — right side for studio messages */}
+                          <div style={{ width:32, flexShrink:0, visibility:"hidden" }}/>
+                        </div>
+                        {showTime && (
+                          <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?38:0, paddingLeft:isMe?0:46 }}>
+                            {isMe ? myName : (m.senderName || clientName)} · {timeStr}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Input bar — iMessage style */}
+                <div style={{ padding:"10px 16px 16px", borderTop:`1px solid ${C.border}` }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
+                      <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                        placeholder="iMessage"
+                        style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                    </div>
+                    <button onClick={sendMsg} disabled={!msgDraft.trim()}
+                      style={{ width:34, height:34, borderRadius:"50%", background:msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
       </div>
     </div>
@@ -25328,7 +25369,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
+    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} supabaseSession={supabaseSession}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
