@@ -4976,7 +4976,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [showNewChat,   setShowNewChat]   = useState(false);
   const [newChatName,   setNewChatName]   = useState("");
   const [threadSelectMode, setThreadSelectMode] = useState(false); // select-to-delete mode
-  const [selectedThreadIds, setSelectedThreadIds] = useState(new Set()); // threads checked for deletion
+  const [selectedThreadIds, setSelectedThreadIds] = useState({}); // { [threadId]: true } — plain obj, not Set
   const [contracts,  setContracts] = useState(INITIAL_CONTRACTS);
   const [activeChat,    setActiveChat]    = useState(null); // kept for compat
   const [projMessages,  setProjMessages]  = useState({}); // { [projId]: { threadId: { id, contactName, messages: [] } } } — loaded from DB
@@ -5893,49 +5893,54 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                 {/* Header: New Chat + Select toggle */}
                 <div style={{ padding:"10px 10px 8px", borderBottom:`1px solid ${C.border}`, display:"flex", gap:6 }}>
                   {threadSelectMode ? (
-                    <>
-                      <button
-                        onClick={async () => {
-                          const toDelete = [...selectedThreadIds];
-                          // Remove all selected from local state at once
-                          setProjMessages(prev => {
-                            const prevMap = { ...(Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {})) };
-                            toDelete.forEach(tid => { delete prevMap[tid]; });
-                            // If active thread was deleted, clear selection
-                            return { ...prev, [proj.id]: prevMap };
-                          });
-                          // If active thread deleted, pick another
-                          if (toDelete.includes(selThread[proj.id])) {
-                            const remaining = Object.keys(threadMap).filter(id => !toDelete.includes(id));
-                            setSelThread(prev => ({ ...prev, [proj.id]: remaining[0] || null }));
-                          }
-                          setSelectedThreadIds(new Set());
-                          setThreadSelectMode(false);
-                          // Persist all deletions to DB
-                          try {
-                            const { data: { session } } = await supabase.auth.getSession();
-                            if (session?.user?.id) {
-                              const { data } = await supabase.from("app_state").select("proj_messages").eq("user_id", session.user.id).single();
-                              if (data?.proj_messages) {
-                                const updated = { ...data.proj_messages };
-                                if (updated[proj.id] && !Array.isArray(updated[proj.id])) {
-                                  updated[proj.id] = { ...updated[proj.id] };
-                                  toDelete.forEach(tid => { delete updated[proj.id][tid]; });
-                                }
-                                await supabase.from("app_state").update({ proj_messages: updated, updated_at: new Date().toISOString() }).eq("user_id", session.user.id);
+                    (() => {
+                      const selCount = Object.keys(selectedThreadIds).length;
+                      return (
+                        <>
+                          <button
+                            onClick={async () => {
+                              const toDelete = Object.keys(selectedThreadIds);
+                              if (toDelete.length === 0) return;
+                              // Remove from local state
+                              setProjMessages(prev => {
+                                const prevMap = { ...(Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {})) };
+                                toDelete.forEach(tid => { delete prevMap[tid]; });
+                                return { ...prev, [proj.id]: prevMap };
+                              });
+                              // Deselect active thread if it was deleted
+                              if (toDelete.includes(selThread[proj.id])) {
+                                const remaining = Object.keys(threadMap).filter(id => !toDelete.includes(id));
+                                setSelThread(prev => ({ ...prev, [proj.id]: remaining[0] || null }));
                               }
-                            }
-                          } catch (_) {}
-                        }}
-                        disabled={selectedThreadIds.size === 0}
-                        style={{ flex:1, padding:"7px 0", background:selectedThreadIds.size>0?"#e05a5a":"#ccc", color:"#fff", border:"none", borderRadius:8, fontSize:11, fontWeight:600, cursor:selectedThreadIds.size>0?"pointer":"default" }}>
-                        Delete ({selectedThreadIds.size})
-                      </button>
-                      <button onClick={() => { setThreadSelectMode(false); setSelectedThreadIds(new Set()); }}
-                        style={{ padding:"7px 10px", background:C.warm, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, fontSize:11, cursor:"pointer" }}>
-                        Cancel
-                      </button>
-                    </>
+                              setSelectedThreadIds({});
+                              setThreadSelectMode(false);
+                              // Persist to DB
+                              try {
+                                const { data: { session } } = await supabase.auth.getSession();
+                                if (session?.user?.id) {
+                                  const { data } = await supabase.from("app_state").select("proj_messages").eq("user_id", session.user.id).single();
+                                  if (data?.proj_messages) {
+                                    const updated = { ...data.proj_messages };
+                                    if (updated[proj.id] && !Array.isArray(updated[proj.id])) {
+                                      updated[proj.id] = { ...updated[proj.id] };
+                                      toDelete.forEach(tid => { delete updated[proj.id][tid]; });
+                                    }
+                                    await supabase.from("app_state").update({ proj_messages: updated, updated_at: new Date().toISOString() }).eq("user_id", session.user.id);
+                                  }
+                                }
+                              } catch (_) {}
+                            }}
+                            disabled={selCount === 0}
+                            style={{ flex:1, padding:"7px 0", background:selCount>0?"#e05a5a":"#ccc", color:"#fff", border:"none", borderRadius:8, fontSize:11, fontWeight:600, cursor:selCount>0?"pointer":"default" }}>
+                            {selCount > 0 ? `Delete (${selCount})` : "Select chats"}
+                          </button>
+                          <button onClick={() => { setThreadSelectMode(false); setSelectedThreadIds({}); }}
+                            style={{ padding:"7px 10px", background:C.warm, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, fontSize:11, cursor:"pointer" }}>
+                            Cancel
+                          </button>
+                        </>
+                      );
+                    })()
                   ) : (
                     <>
                       <button onClick={() => { setShowNewChat(true); setNewChatName(""); }}
@@ -5943,13 +5948,11 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                         New Chat
                       </button>
-                      {threadList.length > 0 && (
-                        <button onClick={() => { setThreadSelectMode(true); setSelectedThreadIds(new Set()); }}
-                          style={{ padding:"7px 10px", background:C.warm, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, fontSize:11, cursor:"pointer" }}
-                          title="Select chats to delete">
-                          Select
-                        </button>
-                      )}
+                      <button onClick={() => { setThreadSelectMode(true); setSelectedThreadIds({}); }}
+                        style={{ padding:"7px 10px", background:C.warm, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, fontSize:11, cursor:"pointer" }}
+                        title="Select chats to delete">
+                        Select
+                      </button>
                     </>
                   )}
                 </div>
@@ -5996,38 +5999,45 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                     </div>
                   ) : threadList.map(thread => {
                     const isActive  = thread.id === activeThreadId;
-                    const isChecked = selectedThreadIds.has(thread.id);
+                    const isChecked = !!selectedThreadIds[thread.id];
                     const lastMsg   = thread.messages?.[thread.messages.length - 1];
                     const initials  = (thread.contactName||"C").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
                     return (
                       <div key={thread.id}
                         onClick={() => {
                           if (threadSelectMode) {
-                            setSelectedThreadIds(prev => {
-                              const next = new Set(prev);
-                              next.has(thread.id) ? next.delete(thread.id) : next.add(thread.id);
-                              return next;
-                            });
+                            setSelectedThreadIds(prev =>
+                              prev[thread.id]
+                                ? (({ [thread.id]: _, ...rest }) => rest)(prev)
+                                : { ...prev, [thread.id]: true }
+                            );
                           } else {
                             setSelThread(prev => ({ ...prev, [proj.id]: thread.id }));
                           }
                         }}
-                        style={{ padding:"10px 12px", background: isChecked?"#fff0f0": isActive?"#e8f0fe":"transparent", borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          {threadSelectMode ? (
-                            <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${isChecked?"#e05a5a":C.border}`, background:isChecked?"#e05a5a":"#fff", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                              {isChecked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
-                            </div>
-                          ) : (
-                            <div style={{ width:34, height:34, borderRadius:"50%", background: isActive?"#007AFF":"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
-                              {initials}
-                            </div>
-                          )}
-                          <div style={{ flex:1, minWidth:0 }}>
-                            <p style={{ fontSize:12, fontWeight:600, color: isChecked?"#e05a5a":C.ink, margin:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{thread.contactName}</p>
-                            {lastMsg && <p style={{ fontSize:10, color:C.muted, margin:"2px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{lastMsg.text}</p>}
+                        style={{ padding:"10px 12px", background: isChecked?"#fff0f0": isActive?"#e8f0fe":"transparent", borderBottom:`1px solid ${C.border}`, cursor:"pointer", display:"flex", alignItems:"center", gap:8 }}>
+                        {threadSelectMode ? (
+                          <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${isChecked?"#e05a5a":C.border}`, background:isChecked?"#e05a5a":"#fff", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                            {isChecked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
                           </div>
+                        ) : (
+                          <div style={{ width:34, height:34, borderRadius:"50%", background: isActive?"#007AFF":"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
+                            {initials}
+                          </div>
+                        )}
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <p style={{ fontSize:12, fontWeight:600, color: isChecked?"#e05a5a":C.ink, margin:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{thread.contactName}</p>
+                          {lastMsg && <p style={{ fontSize:10, color:C.muted, margin:"2px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{lastMsg.text}</p>}
                         </div>
+                        {/* Always-visible single-delete button (not in select mode) */}
+                        {!threadSelectMode && (
+                          <button
+                            onClick={e => { e.stopPropagation(); deleteThread(thread.id); }}
+                            style={{ width:22, height:22, borderRadius:6, background:"transparent", border:`1px solid ${C.border}`, cursor:"pointer", color:C.muted, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}
+                            title="Delete chat">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
