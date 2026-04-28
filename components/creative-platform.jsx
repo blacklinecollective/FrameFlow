@@ -24904,12 +24904,12 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
                 <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Conversation with {clientName} — preview of client view</p>
               </div>
               <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-                {/* Header */}
+                {/* Header — shows studio info (what client sees at top of their portal) */}
                 <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, background:"#f9f9f9" }}>
-                  <div style={{ width:36, height:36, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff" }}>{clientInitials}</div>
+                  <div style={{ width:36, height:36, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff" }}>{myInitials}</div>
                   <div>
-                    <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{clientName}</p>
-                    <p style={{ fontSize:11, color:"#34c759", margin:0 }}>● Active now</p>
+                    <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{myName}</p>
+                    <p style={{ fontSize:11, color:"#34c759", margin:0 }}>● Photographer</p>
                   </div>
                 </div>
                 {/* Messages */}
@@ -24920,10 +24920,10 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
                     </div>
                   )}
                   {grouped.map((m, i) => {
-                    // From photographer's perspective in preview: studio = me (right), client = them (left)
-                    const isMe = m.from === "studio";
-                    const showAvatar = !isMe && m.isLast;
-                    const showName   = !isMe && m.isFirst;
+                    // Mirror exactly what the CLIENT sees: client = right/blue (me), studio = left/gray (them)
+                    const isMe = m.from === "client";
+                    const showAvatar = !isMe && m.isLast;  // studio avatar on left
+                    const showName   = !isMe && m.isFirst; // studio name label on left
                     const showTime   = m.isLast;
                     const timeStr    = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
                     const br = { tl:18, tr:18, br:18, bl:18 };
@@ -24932,13 +24932,13 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
                     return (
                       <div key={m.id||i}>
                         {showName && (
-                          <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{m.senderName || clientName}</p>
+                          <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{m.senderName || myName}</p>
                         )}
                         <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom: m.isLast?2:1 }}>
-                          {/* Avatar — left side for client messages */}
+                          {/* Avatar — left side for studio messages */}
                           <div style={{ width:32, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
                             {showAvatar && (
-                              <div style={{ width:32, height:32, borderRadius:"50%", background:C.dark, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:accent }}>{clientInitials}</div>
+                              <div style={{ width:32, height:32, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"#fff" }}>{myInitials}</div>
                             )}
                           </div>
                           <div style={{
@@ -24950,12 +24950,11 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
                           }}>
                             {m.text}
                           </div>
-                          {/* Avatar placeholder — right side for studio messages */}
-                          <div style={{ width:32, flexShrink:0, visibility:"hidden" }}/>
+                          {isMe && <div style={{ width:32, flexShrink:0 }}/>}
                         </div>
                         {showTime && (
                           <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?38:0, paddingLeft:isMe?0:46 }}>
-                            {isMe ? myName : (m.senderName || clientName)} · {timeStr}
+                            {isMe ? clientName : (m.senderName || myName)} · {timeStr}
                           </p>
                         )}
                       </div>
