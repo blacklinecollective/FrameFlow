@@ -11,7 +11,24 @@ const C = {
 
 const fmt = s => `${Math.floor((s||0)/60)}:${String(Math.floor((s||0)%60)).padStart(2,"0")}`;
 
-// ── Download utility — blob-fetch for cross-origin Supabase Storage URLs ────────
+// ── Video download — direct link via Supabase ?download= (no blob fetch for large files) ──
+function downloadVideo(url, filename) {
+  if (!url) return;
+  const name = filename || url.split("/").pop().split("?")[0] || "video.mp4";
+  const base = url.split("?")[0];
+  // ?download= tells Supabase to serve Content-Disposition: attachment → browser saves the file
+  const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
+  const a = document.createElement("a");
+  a.href = dlUrl;
+  a.download = name;
+  a.target = "_blank";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 1000);
+}
+
+// ── Photo download — blob-fetch for cross-origin Supabase Storage URLs ────────
 async function downloadBlob(url, filename) {
   const name = filename || url.split("/").pop().split("?")[0] || "download";
   try {
@@ -241,7 +258,7 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
                   </div>
                   <div style={{ display:"flex", alignItems:"center", gap:10, paddingRight:12 }}>
                     {latest.url && (
-                      <button onClick={e => { e.stopPropagation(); downloadBlob(latest.url, `${del.title || "video"}.mp4`); }}
+                      <button onClick={e => { e.stopPropagation(); downloadVideo(latest.url, `${del.title || "video"}.mp4`); }}
                         title="Download video"
                         style={{ width:34, height:34, borderRadius:8, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -288,7 +305,7 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
         </div>
         {/* Download current version */}
         {selVer?.url && (
-          <button onClick={() => downloadBlob(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`)}
+          <button onClick={() => downloadVideo(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`)}
             title="Download this version"
             style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${brd}`, background:dark?"rgba(255,255,255,.06)":"#fff", color:sub, fontSize:11, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
