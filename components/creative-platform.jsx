@@ -4977,6 +4977,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
   const [newContact, setNewContact] = useState(blankContact);
+  const [editingContact, setEditingContact] = useState(null); // contact object being edited
   const [projChecklists, setProjChecklists] = useState({});
   const [projTimeLogs, setProjTimeLogs] = useState({
     1: [
@@ -5569,6 +5570,61 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         {/* ── CONTACTS ── */}
         {tab === "contacts" && (
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+            {/* ── Edit Contact Modal ── */}
+            {editingContact && (
+              <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:600, padding:24 }}
+                onClick={e => { if(e.target===e.currentTarget) setEditingContact(null); }}>
+                <div style={{ background:"#fff", borderRadius:18, padding:"28px 28px 24px", maxWidth:480, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.18)" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+                    <p style={{ fontSize:15, fontWeight:700, color:C.ink, margin:0 }}>Edit Contact</p>
+                    <button onClick={() => setEditingContact(null)} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:C.muted, lineHeight:1 }}>×</button>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                    {[
+                      ["Name",  "Full name",              "name",  "text"],
+                      ["Role",  "e.g. Florist, Second Shooter", "role", "text"],
+                      ["Email", "email@example.com",      "email", "email"],
+                      ["Phone", "555-000-0000",           "phone", "tel"],
+                    ].map(([l, ph, key, type]) => (
+                      <div key={key}>
+                        <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.3, marginBottom:5 }}>{l}</p>
+                        <input
+                          type={type}
+                          placeholder={ph}
+                          value={editingContact[key] || ""}
+                          onChange={e => setEditingContact(prev => ({ ...prev, [key]: e.target.value }))}
+                          style={{ width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginBottom:18 }}>
+                    <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.3, marginBottom:5 }}>Type</p>
+                    <select
+                      value={editingContact.type}
+                      onChange={e => setEditingContact(prev => ({ ...prev, type: e.target.value }))}
+                      style={{ width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink }}>
+                      <option value="client">Client</option>
+                      <option value="vendor">Vendor</option>
+                      <option value="second_shooter">Second Shooter</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div style={{ display:"flex", gap:10 }}>
+                    <Btn variant="secondary" style={{ flex:1 }} onClick={() => setEditingContact(null)}>Cancel</Btn>
+                    <Btn icon="check" style={{ flex:2 }} onClick={() => {
+                      if (!editingContact.name.trim()) return;
+                      const initials = editingContact.name.trim().split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+                      const updated = contacts.map(c => c.id === editingContact.id ? { ...editingContact, avatar: initials } : c);
+                      updateProjField(proj.id, { contacts: updated });
+                      setEditingContact(null);
+                    }}>Save Changes</Btn>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <div>
                 <h3 style={{ fontSize:15, fontWeight:600, color:C.ink, margin:0 }}>Project Contacts</h3>
@@ -5640,6 +5696,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                     </div>
                     <div style={{ display:"flex", gap:6 }}>
                       <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
+                      <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
                       <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
                     </div>
                   </div>
@@ -5676,6 +5733,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                       </div>
                       <div style={{ display:"flex", gap:6 }}>
                         <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
+                        <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
                         <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
                       </div>
                     </div>
@@ -5700,6 +5758,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                         <p style={{ margin:"2px 0 0" }}>{c.phone}</p>
                       </div>
                       <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
                         <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
                       </div>
                     </div>
