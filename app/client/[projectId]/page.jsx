@@ -245,17 +245,17 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
                     )}
                   </div>
                   <div style={{ display:"flex", alignItems:"center", gap:10, paddingRight:12 }}>
-                    {latest.url && (
-                      <button onClick={e => { e.stopPropagation(); downloadVideo(latest.url, `${del.title || "video"}.mp4`); }}
-                        title="Download video"
-                        style={{ width:34, height:34, borderRadius:8, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                          <polyline points="7 10 12 15 17 10"/>
-                          <line x1="12" y1="15" x2="12" y2="3"/>
-                        </svg>
-                      </button>
-                    )}
+                    <button
+                      onClick={e => { e.stopPropagation(); if (latest.url) downloadVideo(latest.url, `${del.title || "video"}.mp4`); }}
+                      title={latest.url ? "Download video" : "Video not yet available for download"}
+                      disabled={!latest.url}
+                      style={{ width:34, height:34, borderRadius:8, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:latest.url?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:latest.url?1:0.35 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                      </svg>
+                    </button>
                     <span style={{ color:sub, fontSize:18 }}>›</span>
                   </div>
                 </div>
@@ -292,18 +292,18 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
           ))}
         </div>
         {/* Download current version */}
-        {selVer?.url && (
-          <button onClick={() => downloadVideo(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`)}
-            title="Download this version"
-            style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${brd}`, background:dark?"rgba(255,255,255,.06)":"#fff", color:sub, fontSize:11, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Download
-          </button>
-        )}
+        <button
+          onClick={() => { if (selVer?.url) downloadVideo(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`); }}
+          title={selVer?.url ? "Download this version" : "Video not yet available for download"}
+          disabled={!selVer?.url}
+          style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${brd}`, background:dark?"rgba(255,255,255,.06)":"#fff", color:sub, fontSize:11, fontWeight:600, cursor:selVer?.url?"pointer":"not-allowed", display:"flex", alignItems:"center", gap:5, opacity:selVer?.url?1:0.4 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download
+        </button>
       </div>
 
       {/* Version notes banner */}
