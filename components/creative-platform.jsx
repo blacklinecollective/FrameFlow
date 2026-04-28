@@ -1120,6 +1120,8 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
   const [newDelNotes,   setNewDelNotes]   = useState("");
   const [newDelDrag,    setNewDelDrag]    = useState(false);
   const [creatingDel,   setCreatingDel]   = useState(false);
+  const [newDelError,   setNewDelError]   = useState(null);
+  const [uploadError,   setUploadError]   = useState(null);
   // Refs for real video playback
   const videoRef    = useRef(null);
   const cmpVideoRef = useRef(null);
@@ -1221,12 +1223,11 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
   const doUpload = async () => {
     if (!selDel || !uploadFile) return;
     setUploading(true);
+    setUploadError(null);
 
-    // 1. Create local blob URL for immediate playback (don't revoke yet)
+    // 1. Get duration via temporary blob URL (revoked immediately after)
     const localUrl = URL.createObjectURL(uploadFile);
     let duration = selDel.versions[selDel.versions.length-1]?.duration || 120;
-
-    // 2. Get real duration (reuse localUrl — DON'T revoke it here)
     try {
       await new Promise(resolve => {
         const v = document.createElement("video");
@@ -1236,47 +1237,47 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
         setTimeout(resolve, 4000);
       });
     } catch(_) {}
+    URL.revokeObjectURL(localUrl);
 
-    // 3. Add version immediately with blob URL so playback works right away
+    // 2. Upload to Supabase first — wait for real URL before touching state
+    const fileToUpload = uploadFile;
+    const ext = fileToUpload.name.split(".").pop().toLowerCase();
+    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { data: upData, error: upErr } = await supabase.storage
+      .from("Media").upload(path, fileToUpload, { upsert: true });
+
+    if (upErr || !upData) {
+      setUploadError("Upload failed — " + (upErr?.message || "please try again"));
+      setUploading(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(upData.path);
+
+    // 3. Add version with real Supabase URL — never null, never a blob
     const nextN = selDel.versions.length + 1;
     const newVerId = `${selDel.id}V${nextN}`;
     const newVer = {
       id: newVerId, label: `v${nextN}`, round: nextN, duration,
-      cover: selDel.versions[0].cover, url: localUrl,
+      cover: selDel.versions[0].cover, url: publicUrl,
       uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
       notes: uploadNotes || `Version ${nextN} — new revision`,
     };
     setDeliverables(prev => (prev||[]).map(d => d.id===selDelId ? {...d, versions:[...d.versions, newVer]} : d));
     setAllComments(p => ({ ...p, [newVerId]: [] }));
-    setUploading(false); setUploadDone(true);
-    const fileToUpload = uploadFile;
-    setUploadFile(null);
-    setTimeout(() => { setUploadDone(false); setShowUpload(false); setUploadNotes(""); setCmpVerId(selVerId); switchVersion(newVerId); }, 1600);
-
-    // 4. Upload to Supabase in background — swap URL when done
-    const ext = fileToUpload.name.split(".").pop().toLowerCase();
-    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    supabase.storage.from("Media").upload(path, fileToUpload, { upsert: true }).then(({ data, error }) => {
-      if (!error && data) {
-        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-        setDeliverables(prev => (prev||[]).map(d =>
-          d.id === selDelId ? { ...d, versions: d.versions.map(v => v.id === newVerId ? { ...v, url: publicUrl } : v) } : d
-        ));
-        URL.revokeObjectURL(localUrl);
-      }
-    });
+    setUploading(false); setUploadDone(true); setUploadFile(null);
+    setTimeout(() => { setUploadDone(false); setShowUpload(false); setUploadNotes(""); setUploadError(null); setCmpVerId(selVerId); switchVersion(newVerId); }, 1600);
   };
 
   // Create a brand-new deliverable from list view
   const createDeliverable = async () => {
     if (!newDelTitle.trim() || !newDelFile) return;
     setCreatingDel(true);
+    setNewDelError(null);
 
-    // 1. Create local blob URL immediately — stays alive for this session
+    // 1. Get duration via temporary blob URL (revoked immediately after)
     const localUrl = URL.createObjectURL(newDelFile);
     let duration = 120;
-
-    // 2. Get duration (reuse localUrl — DON'T revoke it here)
     try {
       await new Promise(resolve => {
         const v = document.createElement("video");
@@ -1286,43 +1287,43 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
         setTimeout(resolve, 4000);
       });
     } catch(_) {}
+    URL.revokeObjectURL(localUrl);
 
-    // 3. Create deliverable instantly with blob URL — works right away in browser
+    // 2. Upload to Supabase first — wait for real URL before adding to state
+    const fileToUpload = newDelFile;
+    const ext = fileToUpload.name.split(".").pop().toLowerCase();
+    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { data: upData, error: upErr } = await supabase.storage
+      .from("Media").upload(path, fileToUpload, { upsert: true });
+
+    if (upErr || !upData) {
+      setNewDelError("Upload failed — " + (upErr?.message || "please try again"));
+      setCreatingDel(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(upData.path);
+
+    // 3. Create deliverable with real Supabase URL — never null, never a blob
     const cover = "#111";
     const delId = `DEL_${proj.id}_${Date.now()}`;
     const verId = `${delId}V1`;
     const newDel = {
       id: delId, title: newDelTitle.trim(), cover,
       versions: [{
-        id: verId, label: "v1", round: 1, duration, cover, url: localUrl,
+        id: verId, label: "v1", round: 1, duration, cover, url: publicUrl,
         uploadedAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
         notes: newDelNotes.trim() || "Initial cut — ready for review",
       }],
     };
     setDeliverables(prev => [...(prev||[]), newDel]);
     setAllComments(p => ({ ...p, [verId]: [] }));
-    const fileToUpload = newDelFile;
-    setCreatingDel(false); setShowNewDel(false); setNewDelTitle(""); setNewDelFile(null); setNewDelNotes("");
+    setCreatingDel(false); setShowNewDel(false); setNewDelTitle(""); setNewDelFile(null); setNewDelNotes(""); setNewDelError(null);
 
-    // 4. Navigate immediately (don't wait for upload)
+    // 4. Navigate to player view
     setSelDelId(delId); setSelVerId(verId); setCmpVerId(null);
     setPlayhead(0); setCmpPlayhead(0); setPlaying(false);
     setView("player"); setActiveComment(null); setFilter("all"); setShowAllVers(false);
-
-    // 5. Upload to Supabase in background — swap blob URL → permanent URL when done
-    const ext = fileToUpload.name.split(".").pop().toLowerCase();
-    const path = `video/${proj.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    supabase.storage.from("Media").upload(path, fileToUpload, { upsert: true }).then(({ data, error }) => {
-      if (!error && data) {
-        const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
-        setDeliverables(prev => (prev||[]).map(d =>
-          d.id === delId ? { ...d, versions: d.versions.map(v => v.id === verId ? { ...v, url: publicUrl } : v) } : d
-        ));
-        URL.revokeObjectURL(localUrl); // free memory once Supabase URL is live
-      }
-      // If upload fails: localUrl remains valid for current session; next session will show no video
-      // (blob URLs are stripped from DB saves by _saveState sanitizer)
-    });
   };
 
   // Sync real video element with play/pause state
@@ -1527,12 +1528,14 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
             <textarea value={newDelNotes} onChange={e=>setNewDelNotes(e.target.value)} placeholder="e.g. First cut — please focus feedback on the opening sequence and music choice"
               style={{ width:"100%", height:60, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
           </div>
+          {newDelError && <p style={{ fontSize:12, color:"#e05a5a", margin:"0 0 8px" }}>⚠ {newDelError}</p>}
+          {creatingDel && <p style={{ fontSize:12, color:C.muted, margin:"0 0 8px" }}>⏳ Uploading to cloud — please wait…</p>}
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={createDeliverable} disabled={creatingDel||!newDelTitle.trim()}
-              style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 18px", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:(!newDelTitle.trim()||creatingDel)?0.5:1 }}>
+            <button onClick={createDeliverable} disabled={creatingDel||!newDelTitle.trim()||!newDelFile}
+              style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 18px", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:(!newDelTitle.trim()||!newDelFile||creatingDel)?0.5:1 }}>
               <Ic d={P.upload} size={13} style={{ color:"#fff" }}/> {creatingDel?"Uploading…":"Upload & Open Review"}
             </button>
-            <button onClick={()=>{setShowNewDel(false);setNewDelFile(null);setNewDelTitle("");setNewDelNotes("");}}
+            <button onClick={()=>{setShowNewDel(false);setNewDelFile(null);setNewDelTitle("");setNewDelNotes("");setNewDelError(null);}}
               style={{ padding:"8px 14px", background:C.warm, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, color:C.ink, cursor:"pointer" }}>Cancel</button>
           </div>
         </Card>
@@ -1786,12 +1789,14 @@ const ProjectVideoTab = ({ proj, appVideoDeliverables, setAppVideoDeliverables, 
             <textarea value={uploadNotes} onChange={e=>setUploadNotes(e.target.value)} placeholder="e.g. Fixed opening sequence, updated color grade, extended outro per client notes"
               style={{ width:"100%", height:60, padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, background:C.cream, color:C.ink, resize:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
           </div>
+          {uploadError && <p style={{ fontSize:12, color:"#e05a5a", margin:"0 0 8px" }}>⚠ {uploadError}</p>}
+          {uploading && <p style={{ fontSize:12, color:C.muted, margin:"0 0 8px" }}>⏳ Uploading to cloud — please wait…</p>}
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={doUpload} disabled={uploading}
-              style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 18px", background:uploadDone?C.green:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            <button onClick={doUpload} disabled={uploading||!uploadFile}
+              style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 18px", background:uploadDone?C.green:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", opacity:(!uploadFile||uploading)?0.5:1 }}>
               <Ic d={uploadDone?P.check:P.upload} size={13} style={{ color:"#fff" }}/> {uploading?"Uploading…":uploadDone?"Version added!":"Upload & Stack"}
             </button>
-            <button onClick={()=>setShowUpload(false)} style={{ padding:"8px 14px", background:C.warm, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, color:C.ink, cursor:"pointer" }}>Cancel</button>
+            <button onClick={()=>{setShowUpload(false);setUploadError(null);}} style={{ padding:"8px 14px", background:C.warm, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, color:C.ink, cursor:"pointer" }}>Cancel</button>
           </div>
         </Card>
       )}
