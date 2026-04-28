@@ -4975,6 +4975,8 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [activeChat, setActiveChat] = useState(null); // thread id within group threads
   const [showAddContact, setShowAddContact] = useState(false);
   const [projContacts, setProjContacts] = useState({});
+  const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
+  const [newContact, setNewContact] = useState(blankContact);
   const [projChecklists, setProjChecklists] = useState({});
   const [projTimeLogs, setProjTimeLogs] = useState({
     1: [
@@ -5164,7 +5166,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
       setMsgDraft("");
     };
 
-    const contacts = projContacts[proj.id] || [];
+    const contacts = proj.contacts || [];
 
     return (
       <>
@@ -5579,22 +5581,44 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
               <Card style={{ padding:20, border:`1px dashed ${C.accent}` }}>
                 <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:"0 0 14px" }}>Add a Contact</p>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
-                  {[["Name","Full name"],["Role","e.g. Florist, Second Shooter"],["Email","email@example.com"],["Phone","555-000-0000"]].map(([l,ph]) => (
-                    <div key={l}>
+                  {[
+                    ["Name",  "Full name",              "name",  "text"],
+                    ["Role",  "e.g. Florist, Second Shooter", "role", "text"],
+                    ["Email", "email@example.com",      "email", "email"],
+                    ["Phone", "555-000-0000",           "phone", "tel"],
+                  ].map(([l, ph, key, type]) => (
+                    <div key={key}>
                       <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.3, marginBottom:5 }}>{l}</p>
-                      <input placeholder={ph} style={{ width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box" }}/>
+                      <input
+                        type={type}
+                        placeholder={ph}
+                        value={newContact[key]}
+                        onChange={e => setNewContact(prev => ({ ...prev, [key]: e.target.value }))}
+                        style={{ width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}
+                      />
                     </div>
                   ))}
                 </div>
                 <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <select style={{ padding:"8px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink }}>
-                    <option>Client</option>
-                    <option>Vendor</option>
-                    <option>Second Shooter</option>
-                    <option>Other</option>
+                  <select
+                    value={newContact.type}
+                    onChange={e => setNewContact(prev => ({ ...prev, type: e.target.value }))}
+                    style={{ padding:"8px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink }}>
+                    <option value="client">Client</option>
+                    <option value="vendor">Vendor</option>
+                    <option value="second_shooter">Second Shooter</option>
+                    <option value="other">Other</option>
                   </select>
-                  <Btn icon="check" style={{ marginLeft:"auto" }} onClick={()=>setShowAddContact(false)}>Save Contact</Btn>
-                  <Btn variant="secondary" onClick={()=>setShowAddContact(false)}>Cancel</Btn>
+                  <Btn icon="check" style={{ marginLeft:"auto" }} onClick={() => {
+                    if (!newContact.name.trim()) return;
+                    const initials = newContact.name.trim().split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+                    const contact = { ...newContact, id: "c" + Date.now(), avatar: initials };
+                    const updated = [...contacts, contact];
+                    updateProjField(proj.id, { contacts: updated });
+                    setNewContact(blankContact);
+                    setShowAddContact(false);
+                  }}>Save Contact</Btn>
+                  <Btn variant="secondary" onClick={() => { setNewContact(blankContact); setShowAddContact(false); }}>Cancel</Btn>
                 </div>
               </Card>
             )}
@@ -5616,11 +5640,23 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                     </div>
                     <div style={{ display:"flex", gap:6 }}>
                       <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
+                      <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
                     </div>
                   </div>
                 ))}
               </div>
             </Card>
+
+            {/* Empty state */}
+            {contacts.length === 0 && (
+              <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
+                <svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity:.4, marginBottom:10 }}>
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+                </svg>
+                <p style={{ fontSize:13, margin:0 }}>No contacts yet — click Add Contact to get started</p>
+              </div>
+            )}
 
             {/* Vendors */}
             {contacts.filter(c=>c.type==="vendor").length > 0 && (
@@ -5640,6 +5676,31 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                       </div>
                       <div style={{ display:"flex", gap:6 }}>
                         <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
+                        <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {contacts.filter(c=>c.type==="second_shooter"||c.type==="other").length > 0 && (
+              <Card style={{ padding:20 }}>
+                <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.6, fontWeight:600, margin:"0 0 14px" }}>Team / Other</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {contacts.filter(c=>c.type==="second_shooter"||c.type==="other").map(c => (
+                    <div key={c.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"13px 16px", background:C.cream, borderRadius:12, border:`1px solid ${C.border}` }}>
+                      <div style={{ width:40, height:40, borderRadius:"50%", background:"linear-gradient(135deg,#e0e8f0,#c8d8e8)", color:"#4a6a8a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, flexShrink:0 }}>{c.avatar}</div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{c.name}</p>
+                        <p style={{ fontSize:12, color:C.muted, margin:"2px 0 0" }}>{c.role || (c.type==="second_shooter"?"Second Shooter":"Other")}</p>
+                      </div>
+                      <div style={{ fontSize:12, color:C.muted, textAlign:"right" }}>
+                        <p style={{ margin:0 }}>{c.email}</p>
+                        <p style={{ margin:"2px 0 0" }}>{c.phone}</p>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
                       </div>
                     </div>
                   ))}
