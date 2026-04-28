@@ -4926,7 +4926,9 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession }) => {
+  // Derive the photographer's real display name from their account
+  const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -5177,7 +5179,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
       const msg = {
         id:         "msg_" + Date.now(),
         from:       "studio",
-        senderName: "Studio",
+        senderName: myName,
         text:       msgDraft.trim(),
         ts:         new Date().toISOString(),
       };
@@ -5799,71 +5801,97 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         )}
 
         {/* ── MESSAGES ── */}
-        {tab === "messages" && (
-          <Card style={{ display:"flex", flexDirection:"column", height:580, overflow:"hidden" }}>
-            {/* Header */}
-            <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
-              <div style={{ width:38, height:38, borderRadius:"50%", background:"linear-gradient(135deg,#1a1a1a,#3a3a3a)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, flexShrink:0 }}>
-                {(proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("")}
-              </div>
-              <div style={{ flex:1 }}>
-                <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{proj.client || "Client"}</p>
-                <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{proj.name} · Client Portal Thread</p>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:11, color:C.muted }}>Auto-syncing</span>
-                <div style={{ width:8, height:8, borderRadius:"50%", background:C.green }}/>
-              </div>
-            </div>
-
-            {/* Message list */}
-            <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 20px", background:C.cream, display:"flex", flexDirection:"column", gap:12 }}>
-              {curProjMessages.length === 0 && (
-                <div style={{ textAlign:"center", padding:"48px 24px" }}>
-                  <div style={{ width:52, height:52, borderRadius:"50%", background:"#e8e4df", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
-                    <Ic d={P.msg} size={22} style={{ color:C.muted }}/>
-                  </div>
-                  <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 6px" }}>No messages yet</p>
-                  <p style={{ fontSize:12, color:C.muted, margin:0 }}>Send a message to start the conversation with {proj.client||"your client"}</p>
+        {tab === "messages" && (() => {
+          const clientInitials = (proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("");
+          const myInitials = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+          // Group consecutive messages from same sender
+          const grouped = curProjMessages.reduce((acc, msg, i) => {
+            const prev = curProjMessages[i-1];
+            const isFirst = !prev || prev.from !== msg.from;
+            const isLast  = !curProjMessages[i+1] || curProjMessages[i+1].from !== msg.from;
+            return [...acc, { ...msg, isFirst, isLast }];
+          }, []);
+          return (
+            <Card style={{ display:"flex", flexDirection:"column", height:600, overflow:"hidden", borderRadius:16 }}>
+              {/* iMessage-style header */}
+              <div style={{ padding:"12px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", flexDirection:"column", alignItems:"center", gap:4, flexShrink:0, background:"#fafafa" }}>
+                <div style={{ width:44, height:44, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700 }}>
+                  {clientInitials}
                 </div>
-              )}
-              {curProjMessages.map((msg, i) => {
-                const isStudio = msg.from === "studio";
-                const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "Now";
-                return (
-                  <div key={msg.id || i} style={{ display:"flex", justifyContent: isStudio?"flex-end":"flex-start", alignItems:"flex-end", gap:8 }}>
-                    {!isStudio && (
-                      <div style={{ width:28, height:28, borderRadius:"50%", background:"linear-gradient(135deg,#b8976a,#c9a87b)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:600, flexShrink:0 }}>
-                        {(proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("")}
-                      </div>
-                    )}
-                    <div style={{ maxWidth:400, padding:"11px 16px", borderRadius:16, borderBottomRightRadius: isStudio?4:16, borderBottomLeftRadius: isStudio?16:4, fontSize:13, lineHeight:1.6, background: isStudio?C.ink:"#fff", color: isStudio?"#fff":C.ink, border: isStudio?"none":`1px solid ${C.border}` }}>
-                      {!isStudio && <p style={{ fontSize:10, fontWeight:600, color:"#b8976a", margin:"0 0 4px", textTransform:"uppercase", letterSpacing:.4 }}>{msg.senderName || "Client"}</p>}
-                      <p style={{ margin:0 }}>{msg.text}</p>
-                      <p style={{ fontSize:10, opacity:.55, margin:"5px 0 0", textAlign: isStudio?"right":"left" }}>{timeStr}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Compose */}
-            <div style={{ padding:"12px 16px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, background:C.cream, borderRadius:12, padding:"8px 8px 8px 14px", border:`1px solid ${C.border}` }}>
-                <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
-                  onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
-                  placeholder={`Message ${proj.client||"client"}…`}
-                  style={{ flex:1, background:"transparent", border:"none", fontSize:13, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
-                <button onClick={sendMsg}
-                  disabled={!msgDraft.trim()}
-                  style={{ width:36, height:36, borderRadius:9, background: msgDraft.trim()?C.ink:"#ccc", border:"none", cursor: msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
-                  <Ic d={P.send} size={14} style={{ color:"#fff" }}/>
-                </button>
+                <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{proj.client || "Client"}</p>
+                <p style={{ fontSize:11, color:C.muted, margin:0 }}>{proj.name}</p>
               </div>
-              <p style={{ fontSize:11, color:C.muted, margin:"6px 0 0", textAlign:"center" }}>Client receives messages in their portal · Replies appear here automatically</p>
-            </div>
-          </Card>
-        )}
+
+              {/* Messages */}
+              <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 12px", background:"#fff", display:"flex", flexDirection:"column", gap:2 }}>
+                {curProjMessages.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"60px 24px", color:C.muted }}>
+                    <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
+                    <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 6px" }}>No messages yet</p>
+                    <p style={{ fontSize:12, color:C.muted, margin:0 }}>Start the conversation with {proj.client||"your client"}</p>
+                  </div>
+                )}
+                {grouped.map((msg, i) => {
+                  const isMe = msg.from === "studio";
+                  const showAvatar = !isMe && msg.isLast;
+                  const showName   = !isMe && msg.isFirst;
+                  const showTime   = msg.isLast;
+                  const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
+                  const br = { tl:18, tr:18, bl:18, br:18 };
+                  if (isMe) { br.br = msg.isLast?4:18; br.tr = msg.isFirst?18:18; }
+                  else       { br.bl = msg.isLast?4:18; br.tl = msg.isFirst?18:18; }
+                  return (
+                    <div key={msg.id||i}>
+                      {showName && (
+                        <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{msg.senderName || proj.client || "Client"}</p>
+                      )}
+                      <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent: isMe?"flex-end":"flex-start", marginBottom: msg.isLast?2:1 }}>
+                        {/* Avatar placeholder to keep alignment */}
+                        <div style={{ width:30, flexShrink:0, visibility: !isMe?"visible":"hidden" }}>
+                          {showAvatar && (
+                            <div style={{ width:30, height:30, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
+                              {clientInitials}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ maxWidth:"72%", padding:"10px 14px", fontSize:14, lineHeight:1.5,
+                          borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                          background: isMe?"#007AFF":"#E9E9EB",
+                          color: isMe?"#fff":"#000",
+                        }}>
+                          {msg.text}
+                        </div>
+                        {/* Mirror spacer for "me" side */}
+                        {isMe && <div style={{ width:30, flexShrink:0 }}/>}
+                      </div>
+                      {showTime && (
+                        <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign: isMe?"right":"left", paddingRight: isMe?36:0, paddingLeft: isMe?0:46 }}>
+                          {isMe ? myName : (msg.senderName || proj.client || "Client")} · {timeStr}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Compose bar */}
+              <div style={{ padding:"10px 12px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:`1.5px solid #c7c7cc`, borderRadius:22, padding:"8px 14px" }}>
+                    <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                      onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                      placeholder={`iMessage`}
+                      style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                  </div>
+                  <button onClick={sendMsg} disabled={!msgDraft.trim()}
+                    style={{ width:34, height:34, borderRadius:"50%", background: msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor: msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  </button>
+                </div>
+              </div>
+            </Card>
+          );
+        })()}
 
         {/* ── INVOICES ── */}
         {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} setAppInvoices={setAppInvoices}/>}
@@ -25284,7 +25312,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,

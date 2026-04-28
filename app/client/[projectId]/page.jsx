@@ -760,70 +760,99 @@ export default function ClientPortalPage({ params }) {
       )}
 
       {/* ── Messages tab ── */}
-      {tab === "messages" && (
-        <div style={{ maxWidth:640, margin:"0 auto", padding:"24px 24px 0", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
-          {/* Header */}
-          <div style={{ display:"flex", alignItems:"center", gap:12, paddingBottom:16, borderBottom:`1px solid ${brd}`, flexShrink:0 }}>
-            <div style={{ width:42, height:42, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:700, flexShrink:0 }}>
-              {studioName.split(" ").map(w=>w[0]).slice(0,2).join("")}
-            </div>
-            <div style={{ flex:1 }}>
-              <p style={{ fontSize:15, fontWeight:700, color:fg, margin:0 }}>{studioName}</p>
-              <p style={{ fontSize:12, color:sub, margin:"2px 0 0" }}>Replies typically within 24 hours</p>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <div style={{ width:7, height:7, borderRadius:"50%", background:C.green }}/>
-              <span style={{ fontSize:11, color:sub }}>Live</span>
-            </div>
-          </div>
-
-          {/* Message list */}
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:12, padding:"16px 0", marginBottom:0 }}>
-            {msgs.length === 0 && (
-              <div style={{ textAlign:"center", padding:"48px 0", color:sub }}>
-                <div style={{ fontSize:36, marginBottom:12 }}>💬</div>
-                <p style={{ fontSize:15, fontWeight:600, color:fg, margin:"0 0 6px" }}>Start the conversation</p>
-                <p style={{ fontSize:13, color:sub, margin:0 }}>Send a message to {studioName}</p>
+      {tab === "messages" && (() => {
+        const clientName  = project?.client || "Client";
+        const studioInits = studioName.split(" ").map(w=>w[0]).slice(0,2).join("");
+        const clientInits = clientName.split(" ").map(w=>w[0]).slice(0,2).join("");
+        const msgBg = dark ? "#1c1c1e" : "#fff";
+        const bubbleMe    = "#007AFF";
+        const bubbleThem  = dark ? "#3a3a3c" : "#E9E9EB";
+        const textMe   = "#fff";
+        const textThem = dark ? "#fff" : "#000";
+        // Group for tail logic
+        const grouped = msgs.reduce((acc, m, i) => {
+          const prev = msgs[i-1]; const next = msgs[i+1];
+          return [...acc, { ...m, isFirst:!prev||prev.from!==m.from, isLast:!next||next.from!==m.from }];
+        }, []);
+        return (
+          <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
+            {/* Header */}
+            <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:bg, flexShrink:0 }}>
+              <div style={{ width:46, height:46, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, fontWeight:700 }}>
+                {studioInits}
               </div>
-            )}
-            {msgs.map((m, idx) => {
-              const isClient = m.from === "client";
-              const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time || "");
-              return (
-                <div key={m.id || idx} style={{ display:"flex", justifyContent:isClient?"flex-end":"flex-start", alignItems:"flex-end", gap:8 }}>
-                  {!isClient && (
-                    <div style={{ width:30, height:30, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
-                      {studioName.split(" ").map(w=>w[0]).slice(0,2).join("")}
-                    </div>
-                  )}
-                  <div style={{ maxWidth:"72%", padding:"11px 15px", borderRadius:16, borderBottomRightRadius:isClient?4:16, borderBottomLeftRadius:isClient?16:4, background:isClient?brandColor:(dark?"rgba(255,255,255,.1)":C.warm), color:isClient?"#fff":fg }}>
-                    {!isClient && <p style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:.4, margin:"0 0 4px", opacity:.7 }}>{m.senderName || studioName}</p>}
-                    <p style={{ fontSize:13, lineHeight:1.55, margin:0 }}>{m.text}</p>
-                    <p style={{ fontSize:10, opacity:.55, margin:"5px 0 0", textAlign:isClient?"right":"left" }}>{timeStr}</p>
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={msgEndRef}/>
-          </div>
-
-          {/* Compose */}
-          <div style={{ borderTop:`1px solid ${brd}`, padding:"12px 0 16px", flexShrink:0 }}>
-            <div style={{ display:"flex", gap:10 }}>
-              <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
-                onKeyDown={e => { if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendMsg(); }}}
-                disabled={msgSending}
-                placeholder={`Message ${studioName}…`}
-                style={{ flex:1, padding:"12px 16px", border:`1px solid ${brd}`, borderRadius:12, fontSize:13, color:fg, background:dark?"rgba(255,255,255,.07)":C.cream, outline:"none", fontFamily:"inherit", opacity:msgSending?.6:1 }}/>
-              <button onClick={sendMsg} disabled={!msgDraft.trim() || msgSending}
-                style={{ padding:"12px 20px", background:msgDraft.trim()&&!msgSending?brandColor:"#ccc", color:"#fff", border:"none", borderRadius:12, fontSize:13, fontWeight:600, cursor:msgDraft.trim()&&!msgSending?"pointer":"default", transition:"background .15s", flexShrink:0 }}>
-                {msgSending ? "…" : "Send"}
-              </button>
+              <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>{studioName}</p>
+              <p style={{ fontSize:11, color:sub, margin:0 }}>Photographer</p>
             </div>
-            {msgSent && <p style={{ fontSize:12, color:C.green, marginTop:8, textAlign:"center" }}>✓ Message sent!</p>}
+
+            {/* Messages */}
+            <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", background:msgBg, display:"flex", flexDirection:"column", gap:1 }}>
+              {msgs.length === 0 && (
+                <div style={{ textAlign:"center", padding:"60px 0", color:sub }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
+                  <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 6px" }}>No messages yet</p>
+                  <p style={{ fontSize:13, color:sub, margin:0 }}>Say hello to {studioName}</p>
+                </div>
+              )}
+              {grouped.map((m, i) => {
+                const isMe = m.from === "client";
+                const showAvatar = !isMe && m.isLast;
+                const showName   = !isMe && m.isFirst;
+                const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time||"");
+                const br = { tl:18, tr:18, bl:18, br:18 };
+                if (isMe) br.br = m.isLast ? 4 : 18;
+                else       br.bl = m.isLast ? 4 : 18;
+                return (
+                  <div key={m.id||i}>
+                    {showName && <p style={{ fontSize:11, color:sub, margin:"10px 0 3px 46px" }}>{m.senderName || studioName}</p>}
+                    <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
+                      <div style={{ width:32, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                        {showAvatar && (
+                          <div style={{ width:32, height:32, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>
+                            {studioInits}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ maxWidth:"72%", padding:"10px 14px", fontSize:14, lineHeight:1.5,
+                        borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                        background: isMe ? bubbleMe : bubbleThem,
+                        color: isMe ? textMe : textThem,
+                      }}>
+                        {m.text}
+                      </div>
+                      {isMe && <div style={{ width:32, flexShrink:0 }}/>}
+                    </div>
+                    {m.isLast && (
+                      <p style={{ fontSize:10, color:sub, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?38:0, paddingLeft:isMe?0:46 }}>
+                        {isMe ? clientName : (m.senderName || studioName)} · {timeStr}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              <div ref={msgEndRef}/>
+            </div>
+
+            {/* Compose */}
+            <div style={{ padding:"10px 16px 16px", borderTop:`1px solid ${brd}`, background:bg, flexShrink:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ flex:1, display:"flex", alignItems:"center", background:dark?"#2c2c2e":"#fff", border:`1.5px solid ${dark?"#3a3a3c":"#c7c7cc"}`, borderRadius:22, padding:"9px 16px" }}>
+                  <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}}
+                    disabled={msgSending}
+                    placeholder="iMessage"
+                    style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:fg, outline:"none", fontFamily:"inherit" }}/>
+                </div>
+                <button onClick={sendMsg} disabled={!msgDraft.trim()||msgSending}
+                  style={{ width:36, height:36, borderRadius:"50%", background:msgDraft.trim()&&!msgSending?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()&&!msgSending?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                </button>
+              </div>
+              {msgSent && <p style={{ fontSize:11, color:C.green, marginTop:6, textAlign:"center" }}>✓ Delivered</p>}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Lightbox ── */}
       {lightbox !== null && (
