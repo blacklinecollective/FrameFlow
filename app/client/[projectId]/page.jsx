@@ -11,6 +11,25 @@ const C = {
 
 const fmt = s => `${Math.floor((s||0)/60)}:${String(Math.floor((s||0)%60)).padStart(2,"0")}`;
 
+// ── Download utility — blob-fetch for cross-origin Supabase URLs ──────────────
+async function downloadBlob(url, filename) {
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename || "download";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
+  } catch {
+    // CORS fallback — open in new tab so browser handles it
+    window.open(url, "_blank");
+  }
+}
+
 // ── PIN Gate ─────────────────────────────────────────────────────────────────
 function PinGate({ pin, onUnlock }) {
   const [input, setInput] = useState("");
@@ -44,7 +63,7 @@ function PinGate({ pin, onUnlock }) {
 }
 
 // ── Photo tile ────────────────────────────────────────────────────────────────
-function PhotoTile({ photo, onClick, isFav, onFav }) {
+function PhotoTile({ photo, onClick, isFav, onFav, onDownload }) {
   const src = typeof photo === "string" ? photo : photo?.url;
   const isVid = photo?.type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(src||"");
   return (
@@ -52,12 +71,24 @@ function PhotoTile({ photo, onClick, isFav, onFav }) {
       {isVid
         ? <video src={src} muted playsInline preload="metadata" style={{ width:"100%", height:"auto", display:"block" }}/>
         : <img src={src} alt="" style={{ width:"100%", height:"auto", display:"block" }} loading="lazy"/>}
-      <button onClick={e => { e.stopPropagation(); onFav(); }}
-        style={{ position:"absolute", top:7, right:7, width:28, height:28, borderRadius:"50%", background:isFav?"#e87d7d":"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill={isFav?"#fff":"none"} stroke={isFav?"#fff":"#888"} strokeWidth="2">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
-      </button>
+      {/* Action buttons */}
+      <div style={{ position:"absolute", top:7, right:7, display:"flex", flexDirection:"column", gap:5 }}>
+        <button onClick={e => { e.stopPropagation(); onFav(); }}
+          style={{ width:28, height:28, borderRadius:"50%", background:isFav?"#e87d7d":"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill={isFav?"#fff":"none"} stroke={isFav?"#fff":"#888"} strokeWidth="2">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+        </button>
+        <button onClick={e => { e.stopPropagation(); onDownload && onDownload(); }}
+          style={{ width:28, height:28, borderRadius:"50%", background:"rgba(255,255,255,.85)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}
+          title="Download">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
@@ -197,7 +228,20 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
                       <p style={{ fontSize:12, color:sub, margin:"10px 0 0", lineHeight:1.5 }}>📝 {latest.notes}</p>
                     )}
                   </div>
-                  <div style={{ display:"flex", alignItems:"center", paddingRight:18, color:sub, fontSize:18 }}>›</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, paddingRight:12 }}>
+                    {latest.url && (
+                      <button onClick={e => { e.stopPropagation(); downloadBlob(latest.url, `${del.title || "video"}.mp4`); }}
+                        title="Download video"
+                        style={{ width:34, height:34, borderRadius:8, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/>
+                          <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                      </button>
+                    )}
+                    <span style={{ color:sub, fontSize:18 }}>›</span>
+                  </div>
                 </div>
               );
             })}
@@ -231,6 +275,19 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
             </button>
           ))}
         </div>
+        {/* Download current version */}
+        {selVer?.url && (
+          <button onClick={() => downloadBlob(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`)}
+            title="Download this version"
+            style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${brd}`, background:dark?"rgba(255,255,255,.06)":"#fff", color:sub, fontSize:11, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download
+          </button>
+        )}
       </div>
 
       {/* Version notes banner */}
@@ -402,6 +459,7 @@ export default function ClientPortalPage({ params }) {
   const [msgSending,setMsgSending]= useState(false);
   const [threads,    setThreads]    = useState({}); // { threadId: { id, contactName, messages } }
   const [selThreadId,setSelThreadId]= useState(null);
+  const [dlProgress, setDlProgress] = useState(null); // null | { done: n, total: n }
   const [payModal,  setPayModal]  = useState(null);  // invoice being paid
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
@@ -551,6 +609,23 @@ export default function ClientPortalPage({ params }) {
   const openInvoices = invoices.filter(i => i.status !== "Paid");
   const totalDue = openInvoices.reduce((s, i) => s + (Number(i.total)||0), 0);
 
+  // ── Download all photos sequentially with progress ──────────────────────────
+  const downloadAllPhotos = async () => {
+    if (!photos.length || dlProgress) return;
+    setDlProgress({ done: 0, total: photos.length });
+    for (let i = 0; i < photos.length; i++) {
+      const ph = photos[i];
+      const url = typeof ph === "string" ? ph : ph?.url;
+      const ext = (url || "").split("?")[0].split(".").pop() || "jpg";
+      const filename = ph?.name || `photo-${i + 1}.${ext}`;
+      await downloadBlob(url, filename);
+      setDlProgress({ done: i + 1, total: photos.length });
+      // small gap between downloads so browser doesn't throttle
+      if (i < photos.length - 1) await new Promise(r => setTimeout(r, 300));
+    }
+    setTimeout(() => setDlProgress(null), 2500);
+  };
+
   // ── Send message to photographer ────────────────────────────────────────────
   const sendMsg = async () => {
     const text = msgDraft.trim();
@@ -617,11 +692,15 @@ export default function ClientPortalPage({ params }) {
               {delivery.galleryTitle || (project.name ? `${project.name} — Your Gallery` : "Your Gallery")}
             </h1>
             {delivery.message && <p style={{ fontSize:14, color:sub, maxWidth:540, margin:"0 auto 24px", lineHeight:1.7 }}>{delivery.message}</p>}
-            {delivery.downloadEnabled && photos.length > 0 && (
-              <a href="#download-all" onClick={e => { e.preventDefault(); photos.forEach((ph, idx) => { const a = document.createElement("a"); a.href = typeof ph==="string"?ph:ph.url; a.download = ph.name||`photo-${idx+1}`; a.target="_blank"; a.click(); }); }}
-                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"11px 24px", background:brandColor, color:"#fff", borderRadius:12, fontSize:13, fontWeight:600, cursor:"pointer", textDecoration:"none" }}>
-                ↓ Download All ({photos.length} {photos.length===1?"photo":"photos"})
-              </a>
+            {photos.length > 0 && (
+              <button onClick={downloadAllPhotos} disabled={!!dlProgress}
+                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"11px 24px", background:dlProgress?"#a0a0a0":brandColor, color:"#fff", borderRadius:12, fontSize:13, fontWeight:600, cursor:dlProgress?"not-allowed":"pointer", border:"none", transition:"background .15s" }}>
+                {dlProgress
+                  ? (dlProgress.done === dlProgress.total
+                      ? `✓ Downloaded all ${dlProgress.total} ${dlProgress.total===1?"photo":"photos"}`
+                      : `↓ Downloading ${dlProgress.done} / ${dlProgress.total}…`)
+                  : `↓ Download All (${photos.length} ${photos.length===1?"photo":"photos"})`}
+              </button>
             )}
             {favs.length > 0 && <p style={{ fontSize:12, color:sub, marginTop:10 }}>{favs.length} photo{favs.length!==1?"s":""} hearted</p>}
           </div>
@@ -632,7 +711,12 @@ export default function ClientPortalPage({ params }) {
               {photos.map((photo, idx) => (
                 <PhotoTile key={idx} photo={photo} isFav={favs.includes(idx)}
                   onFav={() => setFavs(prev => prev.includes(idx)?prev.filter(x=>x!==idx):[...prev,idx])}
-                  onClick={() => setLightbox(idx)}/>
+                  onClick={() => setLightbox(idx)}
+                  onDownload={() => {
+                    const url = typeof photo === "string" ? photo : photo?.url;
+                    const ext = (url||"").split("?")[0].split(".").pop() || "jpg";
+                    downloadBlob(url, photo?.name || `photo-${idx+1}.${ext}`);
+                  }}/>
               ))}
             </div>
           )}
