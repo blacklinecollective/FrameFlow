@@ -11,22 +11,33 @@ const C = {
 
 const fmt = s => `${Math.floor((s||0)/60)}:${String(Math.floor((s||0)%60)).padStart(2,"0")}`;
 
-// ── Download utility — blob-fetch for cross-origin Supabase URLs ──────────────
+// ── Download utility — blob-fetch for cross-origin Supabase Storage URLs ────────
 async function downloadBlob(url, filename) {
+  const name = filename || url.split("/").pop().split("?")[0] || "download";
   try {
+    // Fetch as blob so the anchor download attribute is honoured (same-origin blob:// URL)
     const res = await fetch(url, { mode: "cors" });
     if (!res.ok) throw new Error("fetch failed");
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
-    a.download = filename || "download";
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
   } catch {
-    // CORS fallback — open in new tab so browser handles it
-    window.open(url, "_blank");
+    // Fallback: Supabase ?download= forces Content-Disposition: attachment
+    const base = url.split("?")[0];
+    const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
+    const a = document.createElement("a");
+    a.href = dlUrl;
+    a.download = name;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 1000);
   }
 }
 

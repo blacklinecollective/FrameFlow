@@ -201,6 +201,7 @@ const Ic = ({ d, size = 18, style = {}, className = "" }) => (
 );
 // ── Blob-download utility (cross-origin Supabase Storage URLs) ────────────────
 async function downloadBlob(url, filename) {
+  const name = filename || url.split("/").pop().split("?")[0] || "download";
   try {
     const res = await fetch(url, { mode: "cors" });
     if (!res.ok) throw new Error("fetch failed");
@@ -208,12 +209,22 @@ async function downloadBlob(url, filename) {
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
-    a.download = filename || "download";
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
   } catch {
-    window.open(url, "_blank");
+    // Fallback: Supabase ?download= forces Content-Disposition: attachment
+    const base = url.split("?")[0];
+    const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
+    const a = document.createElement("a");
+    a.href = dlUrl;
+    a.download = name;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 1000);
   }
 }
 
