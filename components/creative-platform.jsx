@@ -199,6 +199,24 @@ const Ic = ({ d, size = 18, style = {}, className = "" }) => (
     <path d={d} />
   </svg>
 );
+// ── Blob-download utility (cross-origin Supabase Storage URLs) ────────────────
+async function downloadBlob(url, filename) {
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename || "download";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
+  } catch {
+    window.open(url, "_blank");
+  }
+}
+
 const P = {
   home:     "M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25",
   folder:   "M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z",
@@ -3063,6 +3081,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
   const [flagModal,   setFlagModal]   = useState(null);  // { photoIndex, note }
   const [submitted,   setSubmitted]   = useState(false);
   const [dlFeedback,  setDlFeedback]  = useState(null);  // null | "all" | photoIndex
+  const [dlProgress,  setDlProgress]  = useState(null);  // null | { done:n, total:n }
 
   // Expiry calculations
   const TODAY_MS   = new Date("2026-04-22").getTime();
@@ -3071,9 +3090,29 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
   const isExpired  = expDays !== null && expDays < 0;
   const expireSoon = expDays !== null && expDays >= 0 && expDays <= 7;
 
-  const triggerDownload = (which) => {
-    setDlFeedback(which);
-    setTimeout(() => setDlFeedback(null), 2200);
+  const triggerDownload = async (which) => {
+    if (which === "all") {
+      if (dlProgress) return;
+      setDlProgress({ done: 0, total: photos.length });
+      for (let i = 0; i < photos.length; i++) {
+        const ph = photos[i];
+        const url = typeof ph === "string" ? ph : ph?.url;
+        const ext = (url || "").split("?")[0].split(".").pop() || "jpg";
+        await downloadBlob(url, ph?.name || `photo-${i + 1}.${ext}`);
+        setDlProgress({ done: i + 1, total: photos.length });
+        if (i < photos.length - 1) await new Promise(r => setTimeout(r, 300));
+      }
+      setTimeout(() => setDlProgress(null), 2500);
+    } else {
+      // single photo by index
+      const ph = photos[which];
+      if (!ph) return;
+      const url = typeof ph === "string" ? ph : ph?.url;
+      const ext = (url || "").split("?")[0].split(".").pop() || "jpg";
+      setDlFeedback(which);
+      await downloadBlob(url, ph?.name || `photo-${which + 1}.${ext}`);
+      setTimeout(() => setDlFeedback(null), 2200);
+    }
   };
 
   const accent = (brandKit && brandKit.primaryColor) || "#b8976a";
@@ -3219,12 +3258,14 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
           </div>
         )}
         <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
-          {gd.downloadEnabled && (
-            <button onClick={() => triggerDownload("all")}
-              style={{ display:"flex", alignItems:"center", gap:7, padding:"10px 22px", background:dlFeedback==="all"?"#3a6a4a":accent, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", transition:"background .2s" }}>
-              {dlFeedback === "all"
-                ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> Downloading…</>
-                : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download All ({photos.length} photos · {gd.downloadType === "full" ? "Full res" : "Web res"})</>}
+          {photos.length > 0 && (
+            <button onClick={() => triggerDownload("all")} disabled={!!dlProgress}
+              style={{ display:"flex", alignItems:"center", gap:7, padding:"10px 22px", background:dlProgress?"#5a7a6a":accent, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:dlProgress?"not-allowed":"pointer", transition:"background .2s" }}>
+              {dlProgress
+                ? (dlProgress.done === dlProgress.total
+                    ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> Downloaded all {dlProgress.total} photos</>
+                    : <>↓ Downloading {dlProgress.done} / {dlProgress.total}…</>)
+                : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download All ({photos.length} {photos.length===1?"photo":"photos"})</>}
             </button>
           )}
           <button onClick={() => setShowFavOnly(f=>!f)}
@@ -3371,7 +3412,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
               {isFlagged(lightbox) ? "Flagged" : "Flag / Note"}
             </button>
             {/* Download */}
-            {gd.downloadEnabled && (
+            {lightbox !== null && photos[lightbox] && (
               <button onClick={() => triggerDownload(lightbox)}
                 style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 18px", borderRadius:10,
                   border:`1px solid ${dlFeedback===lightbox?"rgba(110,231,183,.4)":"rgba(255,255,255,.2)"}`,
@@ -3379,7 +3420,7 @@ const ClientGalleryView = ({ proj, delivery, clientFavorites, setClientFavorites
                   cursor:"pointer", color:dlFeedback===lightbox?"#6ee7b7":"rgba(255,255,255,.7)", fontSize:13, fontWeight:500, transition:"all .2s" }}>
                 {dlFeedback === lightbox
                   ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> Downloaded</>
-                  : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download {gd.downloadType==="full"?"Full Res":"Web Res"}</>}
+                  : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Photo</>}
               </button>
             )}
           </div>
