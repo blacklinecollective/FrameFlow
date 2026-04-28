@@ -400,6 +400,8 @@ export default function ClientPortalPage({ params }) {
   const [msgs,      setMsgs]      = useState([]);
   const [msgSent,   setMsgSent]   = useState(false);
   const [msgSending,setMsgSending]= useState(false);
+  const [threads,    setThreads]    = useState({}); // { threadId: { id, contactName, messages } }
+  const [selThreadId,setSelThreadId]= useState(null);
   const [payModal,  setPayModal]  = useState(null);  // invoice being paid
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
@@ -422,7 +424,18 @@ export default function ClientPortalPage({ params }) {
         if (!delivery.published) { setNotReady(true); setLoading(false); return; }
         if (delivery.expiryEnabled && delivery.expiryDate && new Date(delivery.expiryDate) < new Date()) { setExpired(true); setLoading(false); return; }
         if (!delivery.pinEnabled) setUnlocked(true);
-        if (Array.isArray(result.messages)) setMsgs(result.messages);
+        if (result.threads && typeof result.threads === "object" && Object.keys(result.threads).length > 0) {
+          setThreads(result.threads);
+          // Auto-select thread matching project.client or first thread
+          const clientName = result.project?.client || "";
+          const matchId = Object.values(result.threads).find(t => t.contactName?.toLowerCase() === clientName.toLowerCase())?.id;
+          setSelThreadId(matchId || Object.keys(result.threads)[0] || null);
+        } else if (Array.isArray(result.messages) && result.messages.length > 0) {
+          // Legacy: wrap in single thread
+          const fallbackId = "default";
+          setThreads({ [fallbackId]: { id: fallbackId, contactName: result.project?.client || "Client", messages: result.messages } });
+          setSelThreadId(fallbackId);
+        }
         setData(result);
         setLoading(false);
       } catch(err) {
@@ -443,7 +456,9 @@ export default function ClientPortalPage({ params }) {
         const sb = sbRef.current;
         if (!sb) return;
         const { data: result } = await sb.rpc("get_client_portal_data", { p_project_id: Number(projectId) });
-        if (result && Array.isArray(result.messages)) {
+        if (result?.threads && typeof result.threads === "object") {
+          setThreads(result.threads);
+        } else if (result && Array.isArray(result.messages)) {
           setMsgs(result.messages);
         }
       } catch (_) {}
@@ -457,7 +472,7 @@ export default function ClientPortalPage({ params }) {
     if (msgEndRef.current) {
       msgEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [msgs]);
+  }, [msgs, threads, selThreadId]);
 
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream }}>
@@ -541,6 +556,7 @@ export default function ClientPortalPage({ params }) {
     const text = msgDraft.trim();
     if (!text || msgSending) return;
     setMsgSending(true);
+    const tid = selThreadId || "default";
     const msg = {
       id:         "msg_" + Date.now(),
       from:       "client",
@@ -548,15 +564,19 @@ export default function ClientPortalPage({ params }) {
       text,
       ts:         new Date().toISOString(),
     };
-    // Optimistically add to UI
-    setMsgs(prev => [...prev, msg]);
+    setThreads(prev => {
+      const prevThread = prev[tid] || { id: tid, contactName: project?.client||"Client", messages: [] };
+      return { ...prev, [tid]: { ...prevThread, messages: [...prevThread.messages, msg] } };
+    });
     setMsgDraft("");
     try {
       const sb = sbRef.current;
       if (sb) {
         await sb.rpc("send_client_message", {
-          p_project_id: Number(projectId),
-          p_message:    msg,
+          p_project_id:   Number(projectId),
+          p_message:      msg,
+          p_thread_id:    tid,
+          p_contact_name: threads[tid]?.contactName || project?.client || "Client",
         });
         setMsgSent(true);
         setTimeout(() => setMsgSent(false), 3000);
@@ -761,6 +781,9 @@ export default function ClientPortalPage({ params }) {
 
       {/* ── Messages tab ── */}
       {tab === "messages" && (() => {
+        const threadList = Object.values(threads);
+        const activeThread = selThreadId ? (threads[selThreadId] || null) : null;
+        const activeMsgs = activeThread?.messages || msgs; // fallback to old msgs state
         const clientName  = project?.client || "Client";
         const studioInits = studioName.split(" ").map(w=>w[0]).slice(0,2).join("");
         const clientInits = clientName.split(" ").map(w=>w[0]).slice(0,2).join("");
@@ -769,13 +792,24 @@ export default function ClientPortalPage({ params }) {
         const bubbleThem  = dark ? "#3a3a3c" : "#E9E9EB";
         const textMe   = "#fff";
         const textThem = dark ? "#fff" : "#000";
-        // Group for tail logic
-        const grouped = msgs.reduce((acc, m, i) => {
-          const prev = msgs[i-1]; const next = msgs[i+1];
+        const grouped = activeMsgs.reduce((acc, m, i) => {
+          const prev = activeMsgs[i-1]; const next = activeMsgs[i+1];
           return [...acc, { ...m, isFirst:!prev||prev.from!==m.from, isLast:!next||next.from!==m.from }];
         }, []);
         return (
           <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
+            {/* Thread selector — only show if multiple threads */}
+            {threadList.length > 1 && (
+              <div style={{ padding:"8px 12px", borderBottom:`1px solid ${brd}`, background:bg, display:"flex", gap:6, overflowX:"auto", flexShrink:0 }}>
+                {threadList.map(t => (
+                  <button key={t.id}
+                    onClick={() => setSelThreadId(t.id)}
+                    style={{ padding:"5px 12px", borderRadius:16, border:`1.5px solid ${t.id===selThreadId?"#007AFF":brd}`, background:t.id===selThreadId?"#007AFF":"transparent", color:t.id===selThreadId?"#fff":fg, fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", fontFamily:"inherit" }}>
+                    {t.contactName}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* Header */}
             <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:bg, flexShrink:0 }}>
               <div style={{ width:46, height:46, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, fontWeight:700 }}>
@@ -784,10 +818,9 @@ export default function ClientPortalPage({ params }) {
               <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>{studioName}</p>
               <p style={{ fontSize:11, color:sub, margin:0 }}>Photographer</p>
             </div>
-
             {/* Messages */}
             <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", background:msgBg, display:"flex", flexDirection:"column", gap:1 }}>
-              {msgs.length === 0 && (
+              {activeMsgs.length === 0 && (
                 <div style={{ textAlign:"center", padding:"60px 0", color:sub }}>
                   <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
                   <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 6px" }}>No messages yet</p>
@@ -832,7 +865,6 @@ export default function ClientPortalPage({ params }) {
               })}
               <div ref={msgEndRef}/>
             </div>
-
             {/* Compose */}
             <div style={{ padding:"10px 16px 16px", borderTop:`1px solid ${brd}`, background:bg, flexShrink:0 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>

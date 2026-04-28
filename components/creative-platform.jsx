@@ -5138,8 +5138,20 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                 dbData && typeof dbData === "object" && !Array.isArray(dbData) &&
                 localData && typeof localData === "object" && !Array.isArray(localData)
               ) {
-                // Both are thread maps — keep local-only threads, DB wins for shared threads
-                result[projId] = { ...localData, ...dbData };
+                // Merge thread-by-thread: DB wins for messages (latest replies),
+                // but local contactName wins so user-set names are never overwritten by DB defaults
+                const merged = {};
+                const allTids = new Set([...Object.keys(localData), ...Object.keys(dbData)]);
+                for (const tid of allTids) {
+                  if (dbData[tid] && localData[tid]) {
+                    merged[tid] = { ...dbData[tid], contactName: localData[tid].contactName || dbData[tid].contactName };
+                  } else if (dbData[tid]) {
+                    merged[tid] = dbData[tid];
+                  } else {
+                    merged[tid] = localData[tid];
+                  }
+                }
+                result[projId] = merged;
               } else {
                 result[projId] = dbData;
               }
@@ -5221,9 +5233,10 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
       setMsgDraft("");
       try {
         await supabase.rpc("send_client_message", {
-          p_project_id: Number(proj.id),
-          p_message:    msg,
-          p_thread_id:  tid,
+          p_project_id:   Number(proj.id),
+          p_message:      msg,
+          p_thread_id:    tid,
+          p_contact_name: activeThread?.contactName || proj.client || "Client",
         });
       } catch (_) {}
     };
@@ -24354,8 +24367,18 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
       try {
         const { data } = await supabase.rpc("get_client_portal_data", { p_project_id: Number(proj.id) });
         if (data?.threads && typeof data.threads === "object" && !Array.isArray(data.threads)) {
-          // Merge: DB threads overwrite matching local threads, but local-only threads survive
-          setPortalThreads(prev => ({ ...prev, ...data.threads }));
+          // Merge: DB wins for messages (latest replies), local wins for contactName (user-set names)
+          setPortalThreads(prev => {
+            const merged = { ...prev };
+            for (const [tid, dbThread] of Object.entries(data.threads)) {
+              if (merged[tid]) {
+                merged[tid] = { ...dbThread, contactName: merged[tid].contactName || dbThread.contactName };
+              } else {
+                merged[tid] = dbThread;
+              }
+            }
+            return merged;
+          });
         }
       } catch (_) {}
     }, 6000);
@@ -24380,10 +24403,12 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     });
     setMsgDraft("");
     try {
+      const activePTLocal = portalThreads[tid];
       await supabase.rpc("send_client_message", {
-        p_project_id: Number(proj.id),
-        p_message:    msg,
-        p_thread_id:  tid,
+        p_project_id:   Number(proj.id),
+        p_message:      msg,
+        p_thread_id:    tid,
+        p_contact_name: activePTLocal?.contactName || clientName,
       });
     } catch (_) {}
   };
