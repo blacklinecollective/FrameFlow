@@ -4972,9 +4972,12 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   };
   const [msgDraft,   setMsgDraft]  = useState("");
   const [threads,    setThreads]   = useState(MESSAGES);
+  const [selThread,  setSelThread] = useState({}); // { [projId]: threadId }
+  const [showNewChat,setShowNewChat]= useState(false);
+  const [newChatName,setNewChatName]= useState("");
   const [contracts,  setContracts] = useState(INITIAL_CONTRACTS);
   const [activeChat,    setActiveChat]    = useState(null); // kept for compat
-  const [projMessages,  setProjMessages]  = useState({}); // { [projId]: [{id,from,senderName,text,ts}] } — loaded from DB
+  const [projMessages,  setProjMessages]  = useState({}); // { [projId]: { threadId: { id, contactName, messages: [] } } } — loaded from DB
   const [showAddContact, setShowAddContact] = useState(false);
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
@@ -5125,7 +5128,24 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           .eq("user_id", session.user.id)
           .single();
         if (data?.proj_messages) {
-          setProjMessages(data.proj_messages);
+          // Merge DB state with local state so locally-created threads (not yet saved) are preserved.
+          // DB thread data takes precedence (to pick up new client replies), but local-only threads survive.
+          setProjMessages(prev => {
+            const result = { ...prev };
+            for (const [projId, dbData] of Object.entries(data.proj_messages)) {
+              const localData = prev[projId];
+              if (
+                dbData && typeof dbData === "object" && !Array.isArray(dbData) &&
+                localData && typeof localData === "object" && !Array.isArray(localData)
+              ) {
+                // Both are thread maps — keep local-only threads, DB wins for shared threads
+                result[projId] = { ...localData, ...dbData };
+              } else {
+                result[projId] = dbData;
+              }
+            }
+            return result;
+          });
         }
       } catch (_) {}
     };
@@ -5171,11 +5191,20 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     const activeGroup = getGroupId(tab);
     const activeGroupData = TAB_GROUPS.find(g => g.id === activeGroup);
 
-    // ── Messages for this project (loaded from DB, never auto-saved) ──
-    const curProjMessages = projMessages[proj.id] || [];
+    // ── Messages for this project (thread-based) ──
+    const rawThreadData = projMessages[proj.id];
+    // Handle legacy flat array → convert to thread map
+    const threadMap = Array.isArray(rawThreadData)
+      ? (rawThreadData.length > 0 ? { default: { id:"default", contactName: proj.client||"Client", messages: rawThreadData } } : {})
+      : (rawThreadData || {});
+    const threadList = Object.values(threadMap);
+    // Auto-select first thread if none selected
+    const activeThreadId = selThread[proj.id] || (threadList[0]?.id) || null;
+    const activeThread   = activeThreadId ? (threadMap[activeThreadId] || null) : null;
+    const curProjMessages = activeThread?.messages || [];
 
     const sendMsg = async () => {
-      if (!msgDraft.trim()) return;
+      if (!msgDraft.trim() || !activeThreadId) return;
       const msg = {
         id:         "msg_" + Date.now(),
         from:       "studio",
@@ -5183,18 +5212,58 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         text:       msgDraft.trim(),
         ts:         new Date().toISOString(),
       };
-      // Optimistically update local state immediately
-      setProjMessages(prev => ({
-        ...prev,
-        [proj.id]: [...(prev[proj.id] || []), msg],
-      }));
+      const tid = activeThreadId;
+      setProjMessages(prev => {
+        const prevMap = Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {});
+        const prevThread = prevMap[tid] || { id: tid, contactName: proj.client||"Client", messages: [] };
+        return { ...prev, [proj.id]: { ...prevMap, [tid]: { ...prevThread, messages: [...prevThread.messages, msg] } } };
+      });
       setMsgDraft("");
-      // Write to DB via RPC (append-only, no overwrite risk)
       try {
         await supabase.rpc("send_client_message", {
           p_project_id: Number(proj.id),
           p_message:    msg,
+          p_thread_id:  tid,
         });
+      } catch (_) {}
+    };
+
+    const createThread = async () => {
+      const name = newChatName.trim() || proj.client || "Client";
+      const tid  = "thread_" + Date.now();
+      setProjMessages(prev => {
+        const prevMap = Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {});
+        return { ...prev, [proj.id]: { ...prevMap, [tid]: { id: tid, contactName: name, messages: [] } } };
+      });
+      setSelThread(prev => ({ ...prev, [proj.id]: tid }));
+      setShowNewChat(false);
+      setNewChatName("");
+    };
+
+    const deleteThread = async (tid) => {
+      setProjMessages(prev => {
+        const prevMap = { ...(Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {})) };
+        delete prevMap[tid];
+        return { ...prev, [proj.id]: prevMap };
+      });
+      if (selThread[proj.id] === tid) {
+        const remaining = Object.keys(threadMap).filter(id => id !== tid);
+        setSelThread(prev => ({ ...prev, [proj.id]: remaining[0] || null }));
+      }
+      // Persist deletion to DB
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.id) {
+          const { data } = await supabase.from("app_state").select("proj_messages").eq("user_id", session.user.id).single();
+          if (data?.proj_messages) {
+            const updated = { ...data.proj_messages };
+            if (updated[proj.id] && !Array.isArray(updated[proj.id])) {
+              updated[proj.id] = { ...updated[proj.id] };
+              delete updated[proj.id][tid];
+            }
+            await supabase.from("app_state").update({ proj_messages: updated, updated_at: new Date().toISOString() }).eq("user_id", session.user.id);
+          }
+        }
       } catch (_) {}
     };
 
@@ -5802,92 +5871,179 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
         {/* ── MESSAGES ── */}
         {tab === "messages" && (() => {
-          const clientInitials = (proj.client||"C").split(" ").map(w=>w[0]).slice(0,2).join("");
           const myInitials = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
-          // Group consecutive messages from same sender
-          const grouped = curProjMessages.reduce((acc, msg, i) => {
-            const prev = curProjMessages[i-1];
-            const isFirst = !prev || prev.from !== msg.from;
-            const isLast  = !curProjMessages[i+1] || curProjMessages[i+1].from !== msg.from;
-            return [...acc, { ...msg, isFirst, isLast }];
-          }, []);
           return (
-            <Card style={{ display:"flex", flexDirection:"column", height:600, overflow:"hidden", borderRadius:16 }}>
-              {/* iMessage-style header */}
-              <div style={{ padding:"12px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", flexDirection:"column", alignItems:"center", gap:4, flexShrink:0, background:"#fafafa" }}>
-                <div style={{ width:44, height:44, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700 }}>
-                  {clientInitials}
-                </div>
-                <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{proj.client || "Client"}</p>
-                <p style={{ fontSize:11, color:C.muted, margin:0 }}>{proj.name}</p>
-              </div>
-
-              {/* Messages */}
-              <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 12px", background:"#fff", display:"flex", flexDirection:"column", gap:2 }}>
-                {curProjMessages.length === 0 && (
-                  <div style={{ textAlign:"center", padding:"60px 24px", color:C.muted }}>
-                    <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
-                    <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:"0 0 6px" }}>No messages yet</p>
-                    <p style={{ fontSize:12, color:C.muted, margin:0 }}>Start the conversation with {proj.client||"your client"}</p>
-                  </div>
-                )}
-                {grouped.map((msg, i) => {
-                  const isMe = msg.from === "studio";
-                  const showAvatar = !isMe && msg.isLast;
-                  const showName   = !isMe && msg.isFirst;
-                  const showTime   = msg.isLast;
-                  const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
-                  const br = { tl:18, tr:18, bl:18, br:18 };
-                  if (isMe) { br.br = msg.isLast?4:18; br.tr = msg.isFirst?18:18; }
-                  else       { br.bl = msg.isLast?4:18; br.tl = msg.isFirst?18:18; }
-                  return (
-                    <div key={msg.id||i}>
-                      {showName && (
-                        <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{msg.senderName || proj.client || "Client"}</p>
-                      )}
-                      <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent: isMe?"flex-end":"flex-start", marginBottom: msg.isLast?2:1 }}>
-                        {/* Avatar placeholder to keep alignment */}
-                        <div style={{ width:30, flexShrink:0, visibility: !isMe?"visible":"hidden" }}>
-                          {showAvatar && (
-                            <div style={{ width:30, height:30, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
-                              {clientInitials}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ maxWidth:"72%", padding:"10px 14px", fontSize:14, lineHeight:1.5,
-                          borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
-                          background: isMe?"#007AFF":"#E9E9EB",
-                          color: isMe?"#fff":"#000",
-                        }}>
-                          {msg.text}
-                        </div>
-                        {/* Mirror spacer for "me" side */}
-                        {isMe && <div style={{ width:30, flexShrink:0 }}/>}
-                      </div>
-                      {showTime && (
-                        <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign: isMe?"right":"left", paddingRight: isMe?36:0, paddingLeft: isMe?0:46 }}>
-                          {isMe ? myName : (msg.senderName || proj.client || "Client")} · {timeStr}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Compose bar */}
-              <div style={{ padding:"10px 12px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:`1.5px solid #c7c7cc`, borderRadius:22, padding:"8px 14px" }}>
-                    <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
-                      onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
-                      placeholder={`iMessage`}
-                      style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
-                  </div>
-                  <button onClick={sendMsg} disabled={!msgDraft.trim()}
-                    style={{ width:34, height:34, borderRadius:"50%", background: msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor: msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            <Card style={{ display:"flex", height:620, overflow:"hidden", borderRadius:16, padding:0 }}>
+              {/* ── LEFT: Thread list ── */}
+              <div style={{ width:220, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", flexShrink:0, background:"#fafafa" }}>
+                {/* New chat button */}
+                <div style={{ padding:"12px 12px 10px", borderBottom:`1px solid ${C.border}` }}>
+                  <button onClick={() => { setShowNewChat(true); setNewChatName(""); }}
+                    style={{ width:"100%", padding:"8px 0", background:C.dark, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    New Chat
                   </button>
                 </div>
+
+                {/* New chat inline form */}
+                {showNewChat && (
+                  <div style={{ padding:"10px 12px", borderBottom:`1px solid ${C.border}`, background:"#f0f6ff" }}>
+                    <p style={{ fontSize:11, fontWeight:600, color:C.ink, margin:"0 0 6px" }}>Contact name</p>
+                    <input value={newChatName} onChange={e=>setNewChatName(e.target.value)}
+                      onKeyDown={e=>{ if(e.key==="Enter") createThread(); if(e.key==="Escape") setShowNewChat(false); }}
+                      placeholder={proj.client || "e.g. Mike"}
+                      autoFocus
+                      style={{ width:"100%", padding:"6px 8px", border:`1.5px solid #007AFF`, borderRadius:7, fontSize:12, color:C.ink, outline:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
+                    {/* Suggest from contacts */}
+                    {(proj.contacts||[]).length > 0 && (
+                      <div style={{ marginTop:4, display:"flex", flexWrap:"wrap", gap:4 }}>
+                        {(proj.contacts||[]).map((c,i) => (
+                          <button key={i} onClick={() => setNewChatName(c.name)}
+                            style={{ padding:"2px 8px", background:"#e8f0fe", border:"none", borderRadius:10, fontSize:10, color:"#1a73e8", cursor:"pointer", fontFamily:"inherit" }}>
+                            {c.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display:"flex", gap:6, marginTop:8 }}>
+                      <button onClick={createThread}
+                        style={{ flex:1, padding:"6px 0", background:"#007AFF", color:"#fff", border:"none", borderRadius:7, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                        Start Chat
+                      </button>
+                      <button onClick={() => setShowNewChat(false)}
+                        style={{ padding:"6px 10px", background:C.warm, color:C.muted, border:"none", borderRadius:7, fontSize:11, cursor:"pointer" }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Thread list */}
+                <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto" }}>
+                  {threadList.length === 0 ? (
+                    <div style={{ padding:"24px 12px", textAlign:"center" }}>
+                      <p style={{ fontSize:12, color:C.muted, margin:0 }}>No chats yet.</p>
+                      <p style={{ fontSize:11, color:C.muted, margin:"4px 0 0" }}>Click New Chat to start one.</p>
+                    </div>
+                  ) : threadList.map(thread => {
+                    const isActive = thread.id === activeThreadId;
+                    const lastMsg  = thread.messages?.[thread.messages.length - 1];
+                    const initials = (thread.contactName||"C").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+                    return (
+                      <div key={thread.id}
+                        onClick={() => setSelThread(prev => ({ ...prev, [proj.id]: thread.id }))}
+                        style={{ padding:"10px 12px", background: isActive?"#e8f0fe":"transparent", borderBottom:`1px solid ${C.border}`, cursor:"pointer", position:"relative" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <div style={{ width:34, height:34, borderRadius:"50%", background: isActive?"#007AFF":"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
+                            {initials}
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{thread.contactName}</p>
+                            {lastMsg && <p style={{ fontSize:10, color:C.muted, margin:"2px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{lastMsg.text}</p>}
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); deleteThread(thread.id); }}
+                            style={{ width:18, height:18, borderRadius:"50%", background:"transparent", border:"none", cursor:"pointer", color:C.muted, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:0 }}
+                            onMouseEnter={e=>e.currentTarget.style.opacity="1"}
+                            onMouseLeave={e=>e.currentTarget.style.opacity="0"}
+                            title="Delete chat">×</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── RIGHT: Conversation ── */}
+              <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+                {!activeThread ? (
+                  <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8, color:C.muted, padding:32 }}>
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={C.border} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    <p style={{ fontSize:13, margin:0 }}>Select a chat or start a new one</p>
+                  </div>
+                ) : (() => {
+                  const cInitials = (activeThread.contactName||"C").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+                  const grouped = curProjMessages.reduce((acc, msg, i) => {
+                    const prev = curProjMessages[i-1];
+                    const isFirst = !prev || prev.from !== msg.from;
+                    const isLast  = !curProjMessages[i+1] || curProjMessages[i+1].from !== msg.from;
+                    return [...acc, { ...msg, isFirst, isLast }];
+                  }, []);
+                  return (
+                    <>
+                      {/* Header */}
+                      <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:10, background:"#fafafa", flexShrink:0 }}>
+                        <div style={{ width:36, height:36, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700 }}>
+                          {cInitials}
+                        </div>
+                        <div>
+                          <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{activeThread.contactName}</p>
+                          <p style={{ fontSize:11, color:C.muted, margin:0 }}>{proj.name}</p>
+                        </div>
+                      </div>
+                      {/* Messages */}
+                      <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"14px 12px", background:"#fff", display:"flex", flexDirection:"column", gap:2 }}>
+                        {curProjMessages.length === 0 && (
+                          <div style={{ textAlign:"center", padding:"48px 24px", color:C.muted }}>
+                            <div style={{ fontSize:36, marginBottom:10 }}>💬</div>
+                            <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>No messages yet</p>
+                            <p style={{ fontSize:11, color:C.muted, margin:0 }}>Start the conversation with {activeThread.contactName}</p>
+                          </div>
+                        )}
+                        {grouped.map((msg, i) => {
+                          const isMe = msg.from === "studio";
+                          const showAvatar = !isMe && msg.isLast;
+                          const showName   = !isMe && msg.isFirst;
+                          const showTime   = msg.isLast;
+                          const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
+                          const br = { tl:18, tr:18, bl:18, br:18 };
+                          if (isMe) br.br = msg.isLast?4:18;
+                          else       br.bl = msg.isLast?4:18;
+                          return (
+                            <div key={msg.id||i}>
+                              {showName && <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 44px" }}>{msg.senderName || activeThread.contactName}</p>}
+                              <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom:msg.isLast?2:1 }}>
+                                <div style={{ width:28, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                                  {showAvatar && (
+                                    <div style={{ width:28, height:28, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>
+                                      {cInitials}
+                                    </div>
+                                  )}
+                                </div>
+                                <div style={{ maxWidth:"70%", padding:"10px 13px", fontSize:14, lineHeight:1.5,
+                                  borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                                  background:isMe?"#007AFF":"#E9E9EB", color:isMe?"#fff":"#000" }}>
+                                  {msg.text}
+                                </div>
+                                {isMe && <div style={{ width:28, flexShrink:0 }}/>}
+                              </div>
+                              {showTime && (
+                                <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?34:0, paddingLeft:isMe?0:44 }}>
+                                  {isMe ? myName : (msg.senderName || activeThread.contactName)} · {timeStr}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Compose */}
+                      <div style={{ padding:"10px 12px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
+                            <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                              onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                              placeholder="iMessage"
+                              style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                          </div>
+                          <button onClick={sendMsg} disabled={!msgDraft.trim()}
+                            style={{ width:34, height:34, borderRadius:"50%", background:msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </Card>
           );
@@ -24141,6 +24297,10 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const [msgDraft, setMsgDraft] = useState("");
   const [msgs,     setMsgs]     = useState([]);
   const [msgLoaded,setMsgLoaded]= useState(false);
+  const [selPortalThread, setSelPortalThread] = useState(null); // selected thread id in portal preview
+  const [portalThreads,   setPortalThreads]   = useState({}); // all threads for this project
+  const [showNewPortalChat, setShowNewPortalChat] = useState(false);
+  const [newPortalChatName, setNewPortalChatName] = useState("");
   const [favs,     setFavs]     = useState([]);
   const [lightbox, setLightbox] = useState(null);
   const [payModal, setPayModal] = useState(null);   // invoice being paid
@@ -24171,14 +24331,20 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const TASK_LABELS_PORTAL = ["Consultation","Shot List","Shoot Day","Culling","Editing","Delivery"];
   const completedTasks = proj.tasks ? proj.tasks.filter(Boolean).length : 0;
 
-  // Load real messages from DB when portal opens
+  // Load threads from DB when portal opens
   useEffect(() => {
     if (!proj?.id || msgLoaded) return;
     const loadMsgs = async () => {
       try {
         const { data } = await supabase.rpc("get_client_portal_data", { p_project_id: Number(proj.id) });
-        if (data && Array.isArray(data.messages)) {
-          setMsgs(data.messages);
+        if (data) {
+          if (data.threads && typeof data.threads === "object" && !Array.isArray(data.threads)) {
+            setPortalThreads(data.threads);
+            setMsgs([]); // msgs now driven by thread selection
+          } else if (Array.isArray(data.messages) && data.messages.length > 0) {
+            // Legacy: wrap in default thread
+            setPortalThreads({ default: { id:"default", contactName: proj.client||"Client", messages: data.messages } });
+          }
         }
       } catch (_) {}
       setMsgLoaded(true);
@@ -24187,7 +24353,10 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
     const iv = setInterval(async () => {
       try {
         const { data } = await supabase.rpc("get_client_portal_data", { p_project_id: Number(proj.id) });
-        if (data && Array.isArray(data.messages)) setMsgs(data.messages);
+        if (data?.threads && typeof data.threads === "object" && !Array.isArray(data.threads)) {
+          // Merge: DB threads overwrite matching local threads, but local-only threads survive
+          setPortalThreads(prev => ({ ...prev, ...data.threads }));
+        }
       } catch (_) {}
     }, 6000);
     return () => clearInterval(iv);
@@ -24197,6 +24366,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const sendMsg = async () => {
     if (!msgDraft.trim()) return;
     const clientName = proj.client || "Client";
+    const tid = selPortalThread || Object.keys(portalThreads)[0] || "default";
     const msg = {
       id:         "msg_" + Date.now(),
       from:       "client",
@@ -24204,14 +24374,39 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
       text:       msgDraft.trim(),
       ts:         new Date().toISOString(),
     };
-    setMsgs(prev => [...prev, msg]);
+    setPortalThreads(prev => {
+      const prevThread = prev[tid] || { id: tid, contactName: clientName, messages: [] };
+      return { ...prev, [tid]: { ...prevThread, messages: [...prevThread.messages, msg] } };
+    });
     setMsgDraft("");
     try {
       await supabase.rpc("send_client_message", {
         p_project_id: Number(proj.id),
         p_message:    msg,
+        p_thread_id:  tid,
       });
     } catch (_) {}
+  };
+
+  const createPortalThread = async () => {
+    const name = newPortalChatName.trim() || proj.client || "Client";
+    const tid  = "thread_" + Date.now();
+    setPortalThreads(prev => ({ ...prev, [tid]: { id: tid, contactName: name, messages: [] } }));
+    setSelPortalThread(tid);
+    setShowNewPortalChat(false);
+    setNewPortalChatName("");
+  };
+
+  const deletePortalThread = async (tid) => {
+    setPortalThreads(prev => {
+      const next = { ...prev };
+      delete next[tid];
+      return next;
+    });
+    if (selPortalThread === tid) {
+      const remaining = Object.keys(portalThreads).filter(id => id !== tid);
+      setSelPortalThread(remaining[0] || null);
+    }
   };
 
   const contracts  = INITIAL_CONTRACTS.filter(c => c.project === proj.name);
@@ -24888,95 +25083,139 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
         )}
 
         {tab === "messages" && (() => {
-          const clientName    = proj.client || "Client";
-          const clientInitials = clientName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
-          const myInitials    = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
-          // Group consecutive messages for bubble tails
-          const grouped = msgs.reduce((acc, msg, i) => {
-            const prev = msgs[i-1];
-            const next = msgs[i+1];
-            const isFirst = !prev || prev.from !== msg.from;
-            const isLast  = !next  || next.from  !== msg.from;
-            return [...acc, { ...msg, isFirst, isLast }];
-          }, []);
+          const ptList = Object.values(portalThreads);
+          const activePTId = selPortalThread || (ptList[0]?.id) || null;
+          const activePT   = activePTId ? (portalThreads[activePTId] || null) : null;
+          const ptMsgs = activePT?.messages || [];
+          const ptMyInitials = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
           return (
-            <div style={{ maxWidth:640 }}>
+            <div style={{ maxWidth:680 }}>
               <div style={{ marginBottom:24 }}>
                 <h2 className="serif" style={{ fontSize:26, fontWeight:500, color:C.ink, margin:0 }}>Messages</h2>
-                <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Conversation with {clientName} — preview of client view</p>
+                <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Conversation preview — client view</p>
               </div>
-              <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-                {/* Header — shows studio info (what client sees at top of their portal) */}
-                <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, background:"#f9f9f9" }}>
-                  <div style={{ width:36, height:36, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff" }}>{myInitials}</div>
-                  <div>
-                    <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{myName}</p>
-                    <p style={{ fontSize:11, color:"#34c759", margin:0 }}>● Photographer</p>
-                  </div>
-                </div>
-                {/* Messages */}
-                <div style={{ padding:"16px 20px", display:"flex", flexDirection:"column", minHeight:300, maxHeight:420, overflowY:"auto" }}>
-                  {grouped.length === 0 && (
-                    <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
-                      <p style={{ fontSize:13, margin:0 }}>No messages yet. Start the conversation!</p>
-                    </div>
-                  )}
-                  {grouped.map((m, i) => {
-                    // Mirror exactly what the CLIENT sees: client = right/blue (me), studio = left/gray (them)
-                    const isMe = m.from === "client";
-                    const showAvatar = !isMe && m.isLast;  // studio avatar on left
-                    const showName   = !isMe && m.isFirst; // studio name label on left
-                    const showTime   = m.isLast;
-                    const timeStr    = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
-                    const br = { tl:18, tr:18, br:18, bl:18 };
-                    if (isMe)  br.br = m.isLast ? 4 : 18;
-                    else       br.bl = m.isLast ? 4 : 18;
-                    return (
-                      <div key={m.id||i}>
-                        {showName && (
-                          <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 46px" }}>{m.senderName || myName}</p>
-                        )}
-                        <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom: m.isLast?2:1 }}>
-                          {/* Avatar — left side for studio messages */}
-                          <div style={{ width:32, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
-                            {showAvatar && (
-                              <div style={{ width:32, height:32, borderRadius:"50%", background:accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"#fff" }}>{myInitials}</div>
-                            )}
-                          </div>
-                          <div style={{
-                            maxWidth:"68%", padding:"10px 14px",
-                            borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
-                            background: isMe ? "#007AFF" : "#E9E9EB",
-                            color: isMe ? "#fff" : C.ink,
-                            fontSize:14, lineHeight:1.5, wordBreak:"break-word",
-                          }}>
-                            {m.text}
-                          </div>
-                          {isMe && <div style={{ width:32, flexShrink:0 }}/>}
-                        </div>
-                        {showTime && (
-                          <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?38:0, paddingLeft:isMe?0:46 }}>
-                            {isMe ? clientName : (m.senderName || myName)} · {timeStr}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* Input bar — iMessage style */}
-                <div style={{ padding:"10px 16px 16px", borderTop:`1px solid ${C.border}` }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
-                      <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
-                        onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
-                        placeholder="iMessage"
-                        style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
-                    </div>
-                    <button onClick={sendMsg} disabled={!msgDraft.trim()}
-                      style={{ width:34, height:34, borderRadius:"50%", background:msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${C.border}`, overflow:"hidden", display:"flex", height:520 }}>
+                {/* Left: thread list */}
+                <div style={{ width:200, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", background:"#fafafa", flexShrink:0 }}>
+                  <div style={{ padding:"10px 10px 8px", borderBottom:`1px solid ${C.border}` }}>
+                    <button onClick={() => { setShowNewPortalChat(true); setNewPortalChatName(""); }}
+                      style={{ width:"100%", padding:"7px 0", background:C.dark, color:"#fff", border:"none", borderRadius:8, fontSize:11, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      New Chat
                     </button>
                   </div>
+                  {showNewPortalChat && (
+                    <div style={{ padding:"8px 10px", borderBottom:`1px solid ${C.border}`, background:"#f0f6ff" }}>
+                      <input value={newPortalChatName} onChange={e=>setNewPortalChatName(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==="Enter") createPortalThread(); if(e.key==="Escape") setShowNewPortalChat(false); }}
+                        placeholder={proj.client||"Contact name"}
+                        autoFocus
+                        style={{ width:"100%", padding:"5px 7px", border:"1.5px solid #007AFF", borderRadius:6, fontSize:11, outline:"none", boxSizing:"border-box", fontFamily:"inherit" }}/>
+                      <div style={{ display:"flex", gap:4, marginTop:6 }}>
+                        <button onClick={createPortalThread} style={{ flex:1, padding:"5px 0", background:"#007AFF", color:"#fff", border:"none", borderRadius:6, fontSize:10, fontWeight:600, cursor:"pointer" }}>Start</button>
+                        <button onClick={() => setShowNewPortalChat(false)} style={{ padding:"5px 8px", background:C.warm, color:C.muted, border:"none", borderRadius:6, fontSize:10, cursor:"pointer" }}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto" }}>
+                    {ptList.length === 0 ? (
+                      <p style={{ fontSize:11, color:C.muted, padding:"16px 10px", textAlign:"center" }}>No chats yet</p>
+                    ) : ptList.map(pt => {
+                      const isActive = pt.id === activePTId;
+                      const lastMsg  = pt.messages?.[pt.messages.length-1];
+                      const inits    = (pt.contactName||"C").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+                      return (
+                        <div key={pt.id}
+                          onClick={() => setSelPortalThread(pt.id)}
+                          style={{ padding:"9px 10px", background:isActive?"#e8f0fe":"transparent", borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                            <div style={{ width:28, height:28, borderRadius:"50%", background:isActive?"#007AFF":"#8e8e93", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, flexShrink:0 }}>{inits}</div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <p style={{ fontSize:11, fontWeight:600, color:C.ink, margin:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{pt.contactName}</p>
+                              {lastMsg && <p style={{ fontSize:10, color:C.muted, margin:"1px 0 0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{lastMsg.text}</p>}
+                            </div>
+                            <button onClick={e=>{e.stopPropagation();deletePortalThread(pt.id);}} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:"0 2px", flexShrink:0 }}>×</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right: conversation */}
+                <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+                  {!activePT ? (
+                    <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:C.muted, flexDirection:"column", gap:8 }}>
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={C.border} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      <p style={{ fontSize:12, margin:0 }}>Select a chat</p>
+                    </div>
+                  ) : (() => {
+                    const cInits = (activePT.contactName||"C").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+                    const gpd = ptMsgs.reduce((acc, m, i) => {
+                      const prev = ptMsgs[i-1]; const next = ptMsgs[i+1];
+                      return [...acc, { ...m, isFirst:!prev||prev.from!==m.from, isLast:!next||next.from!==m.from }];
+                    }, []);
+                    return (
+                      <>
+                        <div style={{ padding:"10px 14px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:9, background:"#f9f9f9", flexShrink:0 }}>
+                          <div style={{ width:32, height:32, borderRadius:"50%", background:accent, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>{ptMyInitials}</div>
+                          <div>
+                            <p style={{ fontSize:12, fontWeight:600, color:C.ink, margin:0 }}>{myName}</p>
+                            <p style={{ fontSize:10, color:"#34c759", margin:0 }}>● Photographer</p>
+                          </div>
+                        </div>
+                        <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"12px 14px", background:"#fff", display:"flex", flexDirection:"column", gap:1 }}>
+                          {ptMsgs.length === 0 && (
+                            <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
+                              <p style={{ fontSize:12, margin:0 }}>No messages yet</p>
+                            </div>
+                          )}
+                          {gpd.map((m, i) => {
+                            const isMe = m.from === "client";
+                            const showAvatar = !isMe && m.isLast;
+                            const showName   = !isMe && m.isFirst;
+                            const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
+                            const br = { tl:18, tr:18, bl:18, br:18 };
+                            if (isMe) br.br = m.isLast?4:18;
+                            else      br.bl = m.isLast?4:18;
+                            return (
+                              <div key={m.id||i}>
+                                {showName && <p style={{ fontSize:10, color:C.muted, margin:"6px 0 2px 40px" }}>{m.senderName||myName}</p>}
+                                <div style={{ display:"flex", alignItems:"flex-end", gap:5, justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
+                                  <div style={{ width:26, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                                    {showAvatar && <div style={{ width:26, height:26, borderRadius:"50%", background:accent, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{ptMyInitials}</div>}
+                                  </div>
+                                  <div style={{ maxWidth:"70%", padding:"9px 12px", fontSize:13, lineHeight:1.5,
+                                    borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                                    background:isMe?"#007AFF":"#E9E9EB", color:isMe?"#fff":C.ink }}>
+                                    {m.text}
+                                  </div>
+                                  {isMe && <div style={{ width:26, flexShrink:0 }}/>}
+                                </div>
+                                {m.isLast && <p style={{ fontSize:10, color:C.muted, margin:"2px 0 6px", textAlign:isMe?"right":"left", paddingRight:isMe?32:0, paddingLeft:isMe?0:40 }}>
+                                  {isMe ? activePT.contactName : (m.senderName||myName)} · {timeStr}
+                                </p>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ padding:"8px 12px 12px", borderTop:`1px solid ${C.border}` }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                            <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:20, padding:"7px 12px" }}>
+                              <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                                onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                                placeholder="iMessage"
+                                style={{ flex:1, background:"transparent", border:"none", fontSize:13, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                            </div>
+                            <button onClick={sendMsg} disabled={!msgDraft.trim()}
+                              style={{ width:30, height:30, borderRadius:"50%", background:msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
