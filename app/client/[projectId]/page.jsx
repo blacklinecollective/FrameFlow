@@ -11,21 +11,16 @@ const C = {
 
 const fmt = s => `${Math.floor((s||0)/60)}:${String(Math.floor((s||0)%60)).padStart(2,"0")}`;
 
-// ── Video download — direct link via Supabase ?download= (no blob fetch for large files) ──
+// ── Video download — direct navigation to Supabase ?download= URL ────────────
+// When the server returns Content-Disposition: attachment the browser saves the
+// file and does NOT navigate away from the current page. No popup needed.
 function downloadVideo(url, filename) {
   if (!url) return;
   const name = filename || url.split("/").pop().split("?")[0] || "video.mp4";
   const base = url.split("?")[0];
-  // ?download= tells Supabase to serve Content-Disposition: attachment → browser saves the file
-  const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
-  const a = document.createElement("a");
-  a.href = dlUrl;
-  a.download = name;
-  a.target = "_blank";
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => document.body.removeChild(a), 1000);
+  // Navigate to the attachment URL — Content-Disposition: attachment keeps the
+  // current page intact and triggers a file save in all major browsers.
+  window.location.href = `${base}?download=${encodeURIComponent(name)}`;
 }
 
 // ── Photo download — blob-fetch for cross-origin Supabase Storage URLs ────────
@@ -44,17 +39,10 @@ async function downloadBlob(url, filename) {
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
   } catch {
-    // Fallback: Supabase ?download= forces Content-Disposition: attachment
+    // Fallback: navigate to Supabase ?download= URL (Content-Disposition: attachment
+    // tells the browser to save without navigating away — no popup needed)
     const base = url.split("?")[0];
-    const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
-    const a = document.createElement("a");
-    a.href = dlUrl;
-    a.download = name;
-    a.target = "_blank";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => document.body.removeChild(a), 1000);
+    window.location.href = `${base}?download=${encodeURIComponent(name)}`;
   }
 }
 
@@ -743,7 +731,9 @@ export default function ClientPortalPage({ params }) {
                   onDownload={() => {
                     const url = typeof photo === "string" ? photo : photo?.url;
                     const ext = (url||"").split("?")[0].split(".").pop() || "jpg";
-                    downloadBlob(url, photo?.name || `photo-${idx+1}.${ext}`);
+                    const name = photo?.name || `photo-${idx+1}.${ext}`;
+                    const isVid = photo?.type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url||"");
+                    if (isVid) { downloadVideo(url, name); } else { downloadBlob(url, name); }
                   }}/>
               ))}
             </div>
