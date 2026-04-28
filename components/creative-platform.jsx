@@ -4926,7 +4926,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, appProjMessages, setAppProjMessages }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments }) => {
   const projects = appProjects || [];
   const [sel,        setSel]       = useState(null);
   const [tab,        setTab]       = useState("overview");
@@ -4971,7 +4971,8 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [msgDraft,   setMsgDraft]  = useState("");
   const [threads,    setThreads]   = useState(MESSAGES);
   const [contracts,  setContracts] = useState(INITIAL_CONTRACTS);
-  const [activeChat, setActiveChat] = useState(null); // not used for real threads anymore, kept for compat
+  const [activeChat,    setActiveChat]    = useState(null); // kept for compat
+  const [projMessages,  setProjMessages]  = useState({}); // { [projId]: [{id,from,senderName,text,ts}] } — loaded from DB
   const [showAddContact, setShowAddContact] = useState(false);
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
@@ -5109,10 +5110,10 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     }
   }, [deepLink]);
 
-  // ── Poll for new client messages every 6 seconds when messages tab is open ──
+  // ── Load + poll messages from DB (RPC-only, never auto-saved) ─────────────
   useEffect(() => {
-    if (!sel || tab !== "messages") return;
-    const poll = async () => {
+    if (!sel) return;
+    const fetchMsgs = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user?.id) return;
@@ -5121,15 +5122,15 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           .select("proj_messages")
           .eq("user_id", session.user.id)
           .single();
-        if (data?.proj_messages && setAppProjMessages) {
-          setAppProjMessages(data.proj_messages);
+        if (data?.proj_messages) {
+          setProjMessages(data.proj_messages);
         }
       } catch (_) {}
     };
-    poll();
-    const iv = setInterval(poll, 6000);
+    fetchMsgs(); // load immediately when project is selected
+    const iv = setInterval(fetchMsgs, 6000); // poll every 6s for client replies
     return () => clearInterval(iv);
-  }, [sel, tab]);
+  }, [sel]);
 
   if (proj) {
     const msgThread = threads.find(m => m.project === proj.name);
@@ -5168,10 +5169,10 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     const activeGroup = getGroupId(tab);
     const activeGroupData = TAB_GROUPS.find(g => g.id === activeGroup);
 
-    // ── Real persisted messages for this project ──
-    const projMessages = (appProjMessages || {})[proj.id] || [];
+    // ── Messages for this project (loaded from DB, never auto-saved) ──
+    const curProjMessages = projMessages[proj.id] || [];
 
-    const sendMsg = () => {
+    const sendMsg = async () => {
       if (!msgDraft.trim()) return;
       const msg = {
         id:         "msg_" + Date.now(),
@@ -5180,11 +5181,19 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         text:       msgDraft.trim(),
         ts:         new Date().toISOString(),
       };
-      const updatedMsgs = [...projMessages, msg];
-      if (setAppProjMessages) {
-        setAppProjMessages(prev => ({ ...prev, [proj.id]: updatedMsgs }));
-      }
+      // Optimistically update local state immediately
+      setProjMessages(prev => ({
+        ...prev,
+        [proj.id]: [...(prev[proj.id] || []), msg],
+      }));
       setMsgDraft("");
+      // Write to DB via RPC (append-only, no overwrite risk)
+      try {
+        await supabase.rpc("send_client_message", {
+          p_project_id: Number(proj.id),
+          p_message:    msg,
+        });
+      } catch (_) {}
     };
 
     const contacts = proj.contacts || [];
@@ -5809,7 +5818,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
             {/* Message list */}
             <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 20px", background:C.cream, display:"flex", flexDirection:"column", gap:12 }}>
-              {projMessages.length === 0 && (
+              {curProjMessages.length === 0 && (
                 <div style={{ textAlign:"center", padding:"48px 24px" }}>
                   <div style={{ width:52, height:52, borderRadius:"50%", background:"#e8e4df", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
                     <Ic d={P.msg} size={22} style={{ color:C.muted }}/>
@@ -5818,7 +5827,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                   <p style={{ fontSize:12, color:C.muted, margin:0 }}>Send a message to start the conversation with {proj.client||"your client"}</p>
                 </div>
               )}
-              {projMessages.map((msg, i) => {
+              {curProjMessages.map((msg, i) => {
                 const isStudio = msg.from === "studio";
                 const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "Now";
                 return (
@@ -24100,12 +24109,8 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const invoices   = (appInvoices || []).filter(i => i.project === proj.name || i.projId === proj.id);
   const [tab,      setTab]      = useState("home");
   const [msgDraft, setMsgDraft] = useState("");
-  const [msgs,     setMsgs]     = useState([
-    { from:"studio", text:"Hi! Your booking is confirmed. We're so excited to work with you!", time:"Mar 12" },
-    { from:"client", text:"Amazing, we can't wait! Is there anything we need to prepare?", time:"Mar 12" },
-    { from:"studio", text:"Just wear comfortable clothes and bring any meaningful props. We'll handle everything else.", time:"Mar 13" },
-    { from:"client", text:"Perfect, thank you so much!", time:"Mar 13" },
-  ]);
+  const [msgs,     setMsgs]     = useState([]);
+  const [msgLoaded,setMsgLoaded]= useState(false);
   const [favs,     setFavs]     = useState([]);
   const [lightbox, setLightbox] = useState(null);
   const [payModal, setPayModal] = useState(null);   // invoice being paid
@@ -24136,11 +24141,45 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   const TASK_LABELS_PORTAL = ["Consultation","Shot List","Shoot Day","Culling","Editing","Delivery"];
   const completedTasks = proj.tasks ? proj.tasks.filter(Boolean).length : 0;
 
-  const sendMsg = () => {
+  // Load real messages from DB when portal opens
+  useEffect(() => {
+    if (!proj?.id || msgLoaded) return;
+    const loadMsgs = async () => {
+      try {
+        const { data } = await supabase.rpc("get_client_portal_data", { p_project_id: Number(proj.id) });
+        if (data && Array.isArray(data.messages)) {
+          setMsgs(data.messages);
+        }
+      } catch (_) {}
+      setMsgLoaded(true);
+    };
+    loadMsgs();
+    const iv = setInterval(async () => {
+      try {
+        const { data } = await supabase.rpc("get_client_portal_data", { p_project_id: Number(proj.id) });
+        if (data && Array.isArray(data.messages)) setMsgs(data.messages);
+      } catch (_) {}
+    }, 6000);
+    return () => clearInterval(iv);
+  }, [proj?.id]);
+
+  const sendMsg = async () => {
     if (!msgDraft.trim()) return;
-    setMsgs(prev => [...prev, { from:"client", text:msgDraft.trim(), time:"Now" }]);
+    const msg = {
+      id:         "msg_" + Date.now(),
+      from:       "studio",
+      senderName: "Studio",
+      text:       msgDraft.trim(),
+      ts:         new Date().toISOString(),
+    };
+    setMsgs(prev => [...prev, msg]);
     setMsgDraft("");
-    setTimeout(() => setMsgs(prev => [...prev, { from:"studio", text:"Thanks for your message! We'll get back to you shortly.", time:"Now" }]), 1200);
+    try {
+      await supabase.rpc("send_client_message", {
+        p_project_id: Number(proj.id),
+        p_message:    msg,
+      });
+    } catch (_) {}
   };
 
   const contracts  = INITIAL_CONTRACTS.filter(c => c.project === proj.name);
@@ -24838,16 +24877,26 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
               </div>
               {/* Messages */}
               <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14, minHeight:320, maxHeight:400, overflowY:"auto" }}>
-                {msgs.map((m,i) => (
-                  <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:m.from==="client"?"flex-end":"flex-start" }}>
-                    <div style={{ maxWidth:"75%", padding:"12px 16px", borderRadius:m.from==="client"?"16px 16px 4px 16px":"16px 16px 16px 4px",
-                      background:m.from==="client"?accent:C.cream,
-                      color:m.from==="client"?"#fff":C.ink, fontSize:14, lineHeight:1.6 }}>
-                      {m.text}
-                    </div>
-                    <span style={{ fontSize:10, color:C.muted, marginTop:4 }}>{m.time}</span>
+                {msgs.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"32px 0", color:C.muted }}>
+                    <p style={{ fontSize:13, margin:0 }}>No messages yet. Start the conversation!</p>
                   </div>
-                ))}
+                )}
+                {msgs.map((m,i) => {
+                  const isStudio = m.from === "studio";
+                  const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time || "");
+                  return (
+                    <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:isStudio?"flex-start":"flex-end" }}>
+                      {isStudio && <span style={{ fontSize:10, fontWeight:600, color:accent, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Studio</span>}
+                      <div style={{ maxWidth:"75%", padding:"12px 16px", borderRadius:isStudio?"16px 16px 16px 4px":"16px 16px 4px 16px",
+                        background:isStudio?C.cream:accent,
+                        color:isStudio?C.ink:"#fff", fontSize:14, lineHeight:1.6 }}>
+                        {m.text}
+                      </div>
+                      <span style={{ fontSize:10, color:C.muted, marginTop:4 }}>{timeStr}</span>
+                    </div>
+                  );
+                })}
               </div>
               {/* Input */}
               <div style={{ padding:"14px 16px", borderTop:`1px solid ${C.border}`, display:"flex", gap:10 }}>
@@ -25117,7 +25166,6 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [galleryPhotos,        setGalleryPhotos]        = useState({}); // { [projId]: [{url,name}] }
   const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
   const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
-  const [appProjMessages,      setAppProjMessages]      = useState({}); // { [projId]: [{id,from,senderName,text,ts}] }
 
   const userId = supabaseSession?.user?.id;
   const [dbLoaded, setDbLoaded] = useState(false);
@@ -25141,7 +25189,6 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.gallery_delivery && Object.keys(data.gallery_delivery).length) setGalleryDelivery(data.gallery_delivery);
         if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
         if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
-        if (data.proj_messages && Object.keys(data.proj_messages).length) setAppProjMessages(data.proj_messages);
       }
       setDbLoaded(true);
     });
@@ -25165,7 +25212,6 @@ function AppShell({ supabaseSession, supabaseClient }) {
     gallery_delivery:   galleryDelivery,
     video_deliverables: appVideoDeliverables,
     video_comments:     appVideoComments,
-    proj_messages:      appProjMessages,
   };
 
   // Immediate (non-debounced) save — used by logout handler
@@ -25192,7 +25238,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   useEffect(() => {
     if (!dbLoaded || !userId) return;
     saveState(userId, _liveState.current);
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, appProjMessages, dbLoaded]);
+  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, dbLoaded]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
@@ -25238,7 +25284,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} appProjMessages={appProjMessages} setAppProjMessages={setAppProjMessages}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
