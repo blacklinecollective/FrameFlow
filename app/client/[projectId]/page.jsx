@@ -45,11 +45,25 @@ function downloadVideo(url, filename) {
   window.location.href = `${base}?download=${encodeURIComponent(name)}`;
 }
 
-// ── Photo download — blob-fetch for cross-origin Supabase Storage URLs ────────
+// ── Photo download — works on desktop and mobile (incl. iOS Safari) ───────────
+// On iOS Safari the <a download> attribute is ignored, so we skip the
+// blob path entirely there and use the Supabase ?download= URL which
+// Content-Disposition saves as a real file. On other browsers we still
+// prefer the blob path because it's faster and doesn't tie up navigation.
 async function downloadBlob(url, filename) {
   const name = filename || url.split("/").pop().split("?")[0] || "download";
+  const base = url.split("?")[0];
+  const dlUrl = `${base}?download=${encodeURIComponent(name)}`;
+  const isIOS = typeof navigator !== "undefined"
+    && /iP(hone|ad|od)/i.test(navigator.userAgent || "")
+    && !/CriOS|FxiOS/i.test(navigator.userAgent || "");
+  if (isIOS) {
+    // iOS Safari: navigate to attachment URL — browser saves the file
+    // and doesn't navigate away from the portal.
+    window.location.href = dlUrl;
+    return;
+  }
   try {
-    // Fetch as blob so the anchor download attribute is honoured (same-origin blob:// URL)
     const res = await fetch(url, { mode: "cors" });
     if (!res.ok) throw new Error("fetch failed");
     const blob = await res.blob();
@@ -61,10 +75,7 @@ async function downloadBlob(url, filename) {
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 2000);
   } catch {
-    // Fallback: navigate to Supabase ?download= URL (Content-Disposition: attachment
-    // tells the browser to save without navigating away — no popup needed)
-    const base = url.split("?")[0];
-    window.location.href = `${base}?download=${encodeURIComponent(name)}`;
+    window.location.href = dlUrl;
   }
 }
 
@@ -1026,28 +1037,75 @@ export default function ClientPortalPage({ params }) {
   };
 
   return (
-    <div style={{ minHeight:"100vh", background:bg, color:fg, fontFamily:"Inter, system-ui, sans-serif" }}>
+    <div className="ff-portal" style={{ minHeight:"100vh", background:bg, color:fg, fontFamily:"Inter, system-ui, sans-serif" }}>
+
+      {/* ── Mobile-first responsive sheet ───────────────────────────────
+          Inline styles drive most of the desktop layout; the rules below
+          override the worst cramping on small viewports. Touch-targets
+          get a 40px minimum, gallery columns collapse from 3→2→1, and
+          the brand + tab rows shrink so nothing is clipped on phones. */}
+      <style>{`
+        .ff-portal * { -webkit-tap-highlight-color: transparent; }
+        .ff-portal button, .ff-portal a { touch-action: manipulation; }
+        .ff-portal-tabstrip { scrollbar-width: none; -ms-overflow-style: none; }
+        .ff-portal-tabstrip::-webkit-scrollbar { display: none; }
+        @media (max-width: 720px) {
+          .ff-portal-header { padding: 0 14px !important; height: 56px !important; }
+          .ff-portal-brand-pill { height: 30px !important; width: 30px !important; }
+          .ff-portal-brand-name { font-size: 13px !important; }
+          .ff-portal-brand-sub { font-size: 10px !important; }
+          .ff-portal-id-pill { padding: 5px 10px 5px 5px !important; }
+          .ff-portal-id-pill span:last-child { display: none !important; }
+          .ff-portal-tabstrip { padding: 0 12px !important; top: 56px !important; }
+          .ff-portal-tabstrip button { padding: 13px 12px !important; font-size: 12px !important; }
+          .ff-portal-content { padding: 22px 14px !important; }
+          .ff-portal-hero { padding: 24px 20px !important; gap: 18px !important; }
+          .ff-portal-hero h1 { font-size: 28px !important; }
+          .ff-portal-hero .ff-portal-hero-cta { width: 100%; }
+          .ff-portal-hero .ff-portal-hero-cta button { width: 100% !important; }
+          .ff-portal-status-card { width: 100% !important; min-width: 0 !important; }
+          .ff-portal-gallery-cols { columns: 2 !important; column-gap: 4px !important; }
+          .ff-portal-folder-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+          .ff-portal-profile-grid { grid-template-columns: 1fr !important; }
+          .ff-portal-modal { max-width: calc(100vw - 24px) !important; padding: 22px 18px !important; }
+          .ff-portal-pay-modal { max-width: calc(100vw - 20px) !important; padding: 24px 20px !important; }
+          .ff-portal-quick-tiles { grid-template-columns: 1fr !important; }
+          .ff-portal-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .ff-portal-rewards-tier { padding: 22px 20px !important; gap: 16px !important; }
+          .ff-portal-rewards-tier h2 { font-size: 26px !important; }
+          /* Messages tab: take the rest of the viewport so the compose
+             stays glued to the bottom on phone keyboards. */
+          .ff-portal-msg-wrap { height: calc(100dvh - 110px) !important; }
+        }
+        @media (max-width: 420px) {
+          .ff-portal-gallery-cols { columns: 1 !important; }
+          .ff-portal-folder-grid { grid-template-columns: 1fr !important; }
+          .ff-portal-stats-grid { grid-template-columns: 1fr !important; }
+          .ff-portal-hero h1 { font-size: 24px !important; }
+        }
+      `}</style>
 
       {/* ── Brand header (matches in-app ClientDashboard styling) ── */}
-      <div style={{ background:portalDark, padding:"0 28px", height:62, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:101 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14, minWidth:0 }}>
+      <div className="ff-portal-header" style={{ background:portalDark, padding:"0 28px", height:62, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:101 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12, minWidth:0, flex:1 }}>
           {brandKit.logoUrl
             ? <img src={brandKit.logoUrl} alt={studioName} style={{ height:34, objectFit:"contain" }}/>
             : (
-              <div style={{ width:36, height:36, background:portalAccent, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              <div className="ff-portal-brand-pill" style={{ width:36, height:36, background:portalAccent, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                 <span style={{ fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{studioInit}</span>
               </div>
             )}
-          <div style={{ minWidth:0 }}>
-            <p style={{ fontSize:15, fontWeight:600, color:"#f5f2ee", margin:0, lineHeight:1, fontFamily:"'Cormorant Garamond', Georgia, serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{studioName}</p>
-            <p style={{ fontSize:11, color:"rgba(255,255,255,.45)", margin:"3px 0 0" }}>Client Portal</p>
+          <div style={{ minWidth:0, flex:1 }}>
+            <p className="ff-portal-brand-name" style={{ fontSize:15, fontWeight:600, color:"#f5f2ee", margin:0, lineHeight:1, fontFamily:"'Cormorant Garamond', Georgia, serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{studioName}</p>
+            <p className="ff-portal-brand-sub" style={{ fontSize:11, color:"rgba(255,255,255,.45)", margin:"3px 0 0" }}>Client Portal</p>
           </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
           <button onClick={() => { setPickerNameDraft(identity?.name || ""); setIdentityPickerOpen(true); }}
             title={identity ? "Change identity" : "Pick your identity"}
-            style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,.08)", borderRadius:99, padding:"6px 14px 6px 6px", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
-            <span style={{ width:26, height:26, borderRadius:"50%", background: identity ? colorForName(identity.name) : "rgba(255,255,255,.15)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
+            className="ff-portal-id-pill"
+            style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,.08)", borderRadius:99, padding:"6px 14px 6px 6px", border:"none", cursor:"pointer", fontFamily:"inherit", minHeight:40 }}>
+            <span style={{ width:26, height:26, borderRadius:"50%", background: identity ? colorForName(identity.name) : "rgba(255,255,255,.15)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, flexShrink:0 }}>
               {visitorInits}
             </span>
             <span style={{ fontSize:12, color:"rgba(255,255,255,.78)", whiteSpace:"nowrap" }}>
@@ -1058,7 +1116,7 @@ export default function ClientPortalPage({ params }) {
       </div>
 
       {/* ── Tab strip (light row under the brand header) ── */}
-      <div style={{ background:bg, borderBottom:`1px solid ${brd}`, padding:"0 28px", display:"flex", alignItems:"center", gap:2, overflowX:"auto", position:"sticky", top:62, zIndex:100 }}>
+      <div className="ff-portal-tabstrip" style={{ background:bg, borderBottom:`1px solid ${brd}`, padding:"0 28px", display:"flex", alignItems:"center", gap:2, overflowX:"auto", position:"sticky", top:62, zIndex:100 }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{ padding:"15px 16px", fontSize:13, fontWeight:tab===t.id?700:500, color:tab===t.id?fg:sub, background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?portalAccent:"transparent"}`, cursor:"pointer", whiteSpace:"nowrap", transition:"all .15s", fontFamily:"inherit" }}>
@@ -1128,10 +1186,10 @@ export default function ClientPortalPage({ params }) {
           { id:"profile",  label:"Your info",      sub:"Contact details + saved payment", icon:"M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M16 7a4 4 0 11-8 0 4 4 0 018 0z" },
         ];
         return (
-          <div style={{ maxWidth:1000, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:22 }}>
+          <div className="ff-portal-content" style={{ maxWidth:1000, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:22 }}>
 
             {/* ── Hero greeting ── */}
-            <div style={{ background:`linear-gradient(135deg, ${portalAccent}18 0%, ${dark?"rgba(255,255,255,.04)":"#fff"} 100%)`, border:`1px solid ${brd}`, borderRadius:18, padding:"36px 32px", display:"flex", alignItems:"center", gap:24, flexWrap:"wrap" }}>
+            <div className="ff-portal-hero" style={{ background:`linear-gradient(135deg, ${portalAccent}18 0%, ${dark?"rgba(255,255,255,.04)":"#fff"} 100%)`, border:`1px solid ${brd}`, borderRadius:18, padding:"36px 32px", display:"flex", alignItems:"center", gap:24, flexWrap:"wrap" }}>
               <div style={{ flex:1, minWidth:240 }}>
                 <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:2, margin:"0 0 6px", fontWeight:600 }}>{project?.type || "Your project"}</p>
                 <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 6px", lineHeight:1.1 }}>
@@ -1200,7 +1258,7 @@ export default function ClientPortalPage({ params }) {
             </div>
 
             {/* ── Quick stats ── */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:12 }}>
+            <div className="ff-portal-stats-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:12 }}>
               {[
                 { label:"Photos",     value: photoCount.toLocaleString() },
                 { label:"Videos",     value: videoCount.toLocaleString() },
@@ -1217,7 +1275,7 @@ export default function ClientPortalPage({ params }) {
             {/* ── Quick-link tiles ── */}
             <div>
               <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:1, fontWeight:600, margin:"0 0 12px" }}>Jump to</p>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
+              <div className="ff-portal-quick-tiles" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
                 {shortcuts.map(s => (
                   <button key={s.id} onClick={() => setTab(s.id)}
                     style={{ display:"flex", alignItems:"flex-start", gap:14, padding:"16px 18px", background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:12, cursor:"pointer", textAlign:"left", fontFamily:"inherit", transition:"transform .15s, box-shadow .15s" }}
@@ -1315,7 +1373,7 @@ export default function ClientPortalPage({ params }) {
 
             {/* Folder grid view */}
             {showGrid && (
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:14 }}>
+              <div className="ff-portal-folder-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:14 }}>
                 {galleryFolders.map(f => {
                   const fp     = photosInFolder(f.id);
                   const cover  = fp.find(p => p?.url) || null;
@@ -1365,7 +1423,7 @@ export default function ClientPortalPage({ params }) {
               visiblePhotos.length === 0 ? (
                 <div style={{ textAlign:"center", padding:"60px 0", color:sub }}><p style={{ fontSize:16 }}>{hasFolders ? "This folder is empty." : "Your photos will appear here once ready."}</p></div>
               ) : (
-                <div style={{ columns:3, columnGap:6 }}>
+                <div className="ff-portal-gallery-cols" style={{ columns:3, columnGap:6 }}>
                   {visiblePhotos.map((photo, vIdx) => {
                     // Translate the visible index to the original photos index so favs/lightbox stay consistent.
                     const idx = photos.indexOf(photo);
@@ -1541,7 +1599,7 @@ export default function ClientPortalPage({ params }) {
         return (
           <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:900, padding:24 }}
             onClick={e => { if(e.target===e.currentTarget && !paying) setPayModal(null); }}>
-            <div style={{ background:dark?"#1a1a1a":"#fff", borderRadius:20, padding:"30px 28px", maxWidth:440, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)", maxHeight:"90vh", overflowY:"auto" }}>
+            <div className="ff-portal-pay-modal" style={{ background:dark?"#1a1a1a":"#fff", borderRadius:20, padding:"30px 28px", maxWidth:440, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)", maxHeight:"90vh", overflowY:"auto" }}>
               <h3 style={{ fontSize:20, fontWeight:700, color:fg, margin:"0 0 6px" }}>Pay invoice</h3>
               <p style={{ fontSize:13, color:sub, margin:"0 0 18px" }}>{payModal.title || payModal.description || "Invoice"}</p>
               <div style={{ background:dark?"rgba(255,255,255,.06)":C.warm, borderRadius:12, padding:"14px 18px", marginBottom:18, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -1677,7 +1735,7 @@ export default function ClientPortalPage({ params }) {
           return list;
         })();
         return (
-          <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
+          <div className="ff-portal-msg-wrap" style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
             {/* Sub-tab switcher: Project chat (everyone) vs General chat (1:1) */}
             <div style={{ display:"flex", gap:6, padding:"10px 16px 0", flexShrink:0 }}>
               {[["project","Project chat"],["general","General chat"]].map(([id, lbl]) => (
@@ -1912,7 +1970,7 @@ export default function ClientPortalPage({ params }) {
                 {profileSaved && <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Saved</span>}
               </div>
               {profileForm && (
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div className="ff-portal-profile-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                   {[
                     ["name","Name","text"],
                     ["email","Email","email"],
@@ -2038,7 +2096,7 @@ export default function ClientPortalPage({ params }) {
         const points = Math.round(totalSpent / 10); // simple placeholder: 10pt per $100 spent
         const refCode = (myContact?.id || identity?.slug || "VIP") + "-PORTAL";
         return (
-          <div style={{ maxWidth:780, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:20 }}>
+          <div className="ff-portal-content" style={{ maxWidth:780, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:20 }}>
             {/* Tier card */}
             <div style={{ background:`linear-gradient(135deg, ${tc.bg} 0%, ${dark?"rgba(255,255,255,.06)":"#fff"} 100%)`, border:`1px solid ${brd}`, borderRadius:18, padding:"28px 28px", display:"flex", alignItems:"center", gap:22, flexWrap:"wrap" }}>
               <div style={{ width:78, height:78, borderRadius:"50%", background:tc.color, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, fontWeight:700, flexShrink:0 }}>
@@ -2113,7 +2171,7 @@ export default function ClientPortalPage({ params }) {
       {showAddCard && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24 }}
           onClick={(e) => { if (e.target === e.currentTarget) setShowAddCard(false); }}>
-          <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+          <div className="ff-portal-modal" style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
             <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Add a card</h3>
             <p style={{ fontSize:12, color:C.muted, margin:"0 0 16px", lineHeight:1.5 }}>Demo mode — only the last 4 digits and brand are saved. Card numbers are never transmitted.</p>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -2157,7 +2215,7 @@ export default function ClientPortalPage({ params }) {
       {showAddBank && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24 }}
           onClick={(e) => { if (e.target === e.currentTarget) setShowAddBank(false); }}>
-          <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+          <div className="ff-portal-modal" style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
             <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Add a bank account</h3>
             <p style={{ fontSize:12, color:C.muted, margin:"0 0 16px", lineHeight:1.5 }}>Demo mode — only the last 4 digits of the account are saved.</p>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -2202,7 +2260,7 @@ export default function ClientPortalPage({ params }) {
         return (
           <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:24 }}
             onClick={(e) => { if (e.target === e.currentTarget && identity) setIdentityPickerOpen(false); }}>
-            <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:380, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+            <div className="ff-portal-modal" style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:380, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
               <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Who's chatting?</h3>
               <p style={{ fontSize:13, color:C.muted, margin:"0 0 18px", lineHeight:1.5 }}>
                 Pick your name so {studioName} and the rest of the project know who's saying what.
