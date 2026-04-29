@@ -18,6 +18,21 @@ const _hash = (s) => { let h = 0; for (let i = 0; i < (s||"").length; i++) h = (
 const SENDER_PALETTE = ["#007AFF","#34C759","#AF52DE","#FF9500","#FF2D55","#5AC8FA","#FF3B30","#5856D6","#30D158"];
 const colorForName = (s) => SENDER_PALETTE[_hash(s||"") % SENDER_PALETTE.length];
 
+// ── Demo-mode payment helpers ────────────────────────────────────────────────
+// We never persist or transmit a full card number — the form takes the digits
+// only to compute `brand` + `last4` for display. Real payment processing
+// belongs in Stripe/etc., not in app_state.
+const cardBrand = (num) => {
+  const n = (num || "").toString().replace(/\D/g, "");
+  if (/^4/.test(n)) return "Visa";
+  if (/^(5[1-5]|2(?:22[1-9]|2[3-9]\d|[3-6]\d{2}|7[01]\d|720))/.test(n)) return "Mastercard";
+  if (/^3[47]/.test(n)) return "Amex";
+  if (/^(6011|65|64[4-9])/.test(n)) return "Discover";
+  return "Card";
+};
+const last4 = (s) => (s || "").toString().replace(/\D/g, "").slice(-4);
+const formatCardNumber = (s) => (s || "").toString().replace(/\D/g, "").slice(0, 19).replace(/(.{4})/g, "$1 ").trim();
+
 // ── Video download — direct navigation to Supabase ?download= URL ────────────
 // When the server returns Content-Disposition: attachment the browser saves the
 // file and does NOT navigate away from the current page. No popup needed.
@@ -487,6 +502,7 @@ export default function ClientPortalPage({ params }) {
   const [payModal,  setPayModal]  = useState(null);  // invoice being paid
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
+  const [selectedPmId, setSelectedPmId] = useState(null); // chosen payment method id
   // ── Shared chat identity ──────────────────────────────────────────────
   // The portal supports multiple participants in one project chat (e.g.
   // Mike + Kelly + the photographer). Each visitor identifies themselves
@@ -496,6 +512,15 @@ export default function ClientPortalPage({ params }) {
   const [identityResolved,   setIdentityResolved]   = useState(false);
   const [identityPickerOpen, setIdentityPickerOpen] = useState(false);
   const [pickerNameDraft,    setPickerNameDraft]    = useState("");
+  // Profile editor + saved-payment-methods state (lifted so it survives tab switches)
+  const [profileForm,    setProfileForm]    = useState(null); // { name, email, phone, address: { line1, city, state, zip } }
+  const [profileSaving,  setProfileSaving]  = useState(false);
+  const [profileSaved,   setProfileSaved]   = useState(false);
+  const [showAddCard,    setShowAddCard]    = useState(false);
+  const [showAddBank,    setShowAddBank]    = useState(false);
+  const [cardDraft,      setCardDraft]      = useState({ cardholder:"", number:"", expiryMonth:"", expiryYear:"", cvc:"" });
+  const [bankDraft,      setBankDraft]      = useState({ accountHolder:"", routing:"", account:"", accountType:"checking" });
+  const [pmError,        setPmError]        = useState(null);
   const sbRef = useRef(null);
   const msgEndRef = useRef(null);
   // Photographer's user_id from the link's ?owner= param. Passed to every
@@ -682,6 +707,7 @@ export default function ClientPortalPage({ params }) {
     { id:"progress", label:"Progress", show: true },
     { id:"invoice",  label:"Invoice",  show: true },
     { id:"messages", label:"Messages", show: true },
+    { id:"profile",  label:"Profile",  show: true },
   ].filter(t => t.show);
 
   const checklist = project.checklist || [];
@@ -744,6 +770,146 @@ export default function ClientPortalPage({ params }) {
       }
     } catch (_) {}
     setMsgSending(false);
+  };
+
+  // ── Resolve which contact card the visitor maps to ─────────────────────────
+  // Used by the Profile tab + Pay Now to find the right contact in the
+  // photographer's project.contacts array. Matches first by contactId
+  // (set when the URL had ?as=<slug> matching a real contact), then by
+  // slugified name (free-form names that happen to match), so re-opening
+  // the portal as the same client lands on the same profile.
+  const myContact = (() => {
+    const list = (project?.contacts || []);
+    if (!identity) return null;
+    if (identity.contactId) {
+      const m = list.find(c => c.id === identity.contactId);
+      if (m) return m;
+    }
+    return list.find(c => slugify(c.name) === identity.slug) || null;
+  })();
+
+  // Persist a patch onto the matched contact via update_client_profile RPC.
+  // Optimistically updates local data so the UI reflects immediately.
+  const saveContactPatch = async (patch) => {
+    if (!myContact?.id) return false;
+    setProfileSaving(true);
+    try {
+      const sb = sbRef.current;
+      if (!sb) throw new Error("no supabase client");
+      const { error } = await sb.rpc("update_client_profile", {
+        p_project_id:    Number(projectId),
+        p_contact_id:    myContact.id,
+        p_profile_data:  patch,
+        p_owner_user_id: ownerUserIdRef.current || null,
+      });
+      if (error) throw error;
+      setData(prev => {
+        if (!prev) return prev;
+        const updatedContacts = (prev.project?.contacts || []).map(c =>
+          c.id === myContact.id ? { ...c, ...patch } : c
+        );
+        return { ...prev, project: { ...prev.project, contacts: updatedContacts } };
+      });
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 1800);
+      return true;
+    } catch (e) {
+      console.error("[portal] saveContactPatch failed:", e);
+      return false;
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // ── Demo-mode payment method handlers ──────────────────────────────────────
+  // Both forms collect the full number/account client-side, but we ONLY persist
+  // brand + last 4 digits to the photographer's app_state. Real PCI-compliant
+  // card storage requires a payment processor like Stripe.
+  const submitCard = async () => {
+    setPmError(null);
+    const num = cardDraft.number.replace(/\D/g, "");
+    if (num.length < 12) { setPmError("That card number doesn't look right"); return; }
+    if (!cardDraft.cardholder.trim()) { setPmError("Please add the cardholder name"); return; }
+    if (!cardDraft.expiryMonth || !cardDraft.expiryYear) { setPmError("Please add an expiry date"); return; }
+    const newMethod = {
+      id: "pm_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+      type: "card",
+      brand: cardBrand(num),
+      last4: last4(num),
+      expiryMonth: cardDraft.expiryMonth,
+      expiryYear:  cardDraft.expiryYear,
+      cardholder:  cardDraft.cardholder.trim(),
+      addedAt: new Date().toISOString(),
+    };
+    const existing = myContact?.paymentMethods || [];
+    if (existing.length === 0) newMethod.default = true;
+    const ok = await saveContactPatch({ paymentMethods: [...existing, newMethod] });
+    if (ok) {
+      setShowAddCard(false);
+      setCardDraft({ cardholder:"", number:"", expiryMonth:"", expiryYear:"", cvc:"" });
+    } else {
+      setPmError("Couldn't save — please try again.");
+    }
+  };
+  const submitBank = async () => {
+    setPmError(null);
+    const acct = bankDraft.account.replace(/\D/g, "");
+    const rt   = bankDraft.routing.replace(/\D/g, "");
+    if (acct.length < 4) { setPmError("Account number looks too short"); return; }
+    if (rt.length !== 9)  { setPmError("Routing numbers in the US are 9 digits"); return; }
+    if (!bankDraft.accountHolder.trim()) { setPmError("Please add the account holder name"); return; }
+    const newMethod = {
+      id: "pm_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+      type: "bank",
+      bankName: "Bank ••" + rt.slice(-4),
+      last4: last4(acct),
+      accountType: bankDraft.accountType,
+      accountHolder: bankDraft.accountHolder.trim(),
+      addedAt: new Date().toISOString(),
+    };
+    const existing = myContact?.paymentMethods || [];
+    if (existing.length === 0) newMethod.default = true;
+    const ok = await saveContactPatch({ paymentMethods: [...existing, newMethod] });
+    if (ok) {
+      setShowAddBank(false);
+      setBankDraft({ accountHolder:"", routing:"", account:"", accountType:"checking" });
+    } else {
+      setPmError("Couldn't save — please try again.");
+    }
+  };
+  const removePaymentMethod = async (pmId) => {
+    if (!myContact) return;
+    const next = (myContact.paymentMethods || []).filter(m => m.id !== pmId);
+    // If we removed the default and others remain, mark first as default
+    if (next.length > 0 && !next.some(m => m.default)) next[0] = { ...next[0], default: true };
+    await saveContactPatch({ paymentMethods: next });
+  };
+  const setDefaultMethod = async (pmId) => {
+    if (!myContact) return;
+    const next = (myContact.paymentMethods || []).map(m => ({ ...m, default: m.id === pmId }));
+    await saveContactPatch({ paymentMethods: next });
+  };
+
+  // Initialize the profile-form when identity / contact resolves the first time
+  useEffect(() => {
+    if (!myContact) { setProfileForm(null); return; }
+    setProfileForm({
+      name:  myContact.name  || "",
+      email: myContact.email || "",
+      phone: myContact.phone || "",
+      address: myContact.address || { line1:"", city:"", state:"", zip:"" },
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myContact?.id]);
+
+  const saveProfileForm = async () => {
+    if (!profileForm) return;
+    await saveContactPatch({
+      name:  profileForm.name,
+      email: profileForm.email,
+      phone: profileForm.phone,
+      address: profileForm.address,
+    });
   };
 
   // Confirm an identity picker selection.
@@ -957,45 +1123,107 @@ export default function ClientPortalPage({ params }) {
         </div>
       )}
 
-      {/* ── Pay Now modal ── */}
-      {payModal && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:900, padding:24 }}
-          onClick={e => { if(e.target===e.currentTarget && !paying) setPayModal(null); }}>
-          <div style={{ background:dark?"#1a1a1a":"#fff", borderRadius:20, padding:"36px 32px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
-            <h3 style={{ fontSize:20, fontWeight:700, color:fg, margin:"0 0 6px" }}>Confirm Payment</h3>
-            <p style={{ fontSize:13, color:sub, margin:"0 0 24px" }}>{payModal.title||payModal.description||"Invoice"}</p>
-            <div style={{ background:dark?"rgba(255,255,255,.06)":C.warm, borderRadius:12, padding:"16px 20px", marginBottom:24, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontSize:14, color:sub }}>Amount Due</span>
-              <span style={{ fontSize:24, fontWeight:800, color:fg }}>${Number(payModal.total||0).toLocaleString()}</span>
-            </div>
-            <p style={{ fontSize:12, color:sub, margin:"0 0 20px", lineHeight:1.6, textAlign:"center" }}>
-              By confirming, you acknowledge this payment and your photographer will be notified.
-            </p>
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={() => !paying && setPayModal(null)}
-                style={{ flex:1, padding:"13px 0", background:"none", border:`1px solid ${brd}`, borderRadius:12, fontSize:14, fontWeight:600, color:fg, cursor:"pointer" }}>
-                Cancel
-              </button>
-              <button disabled={paying} onClick={async () => {
-                  setPaying(true);
-                  try {
-                    const sb = sbRef.current;
-                    if (sb) {
-                      const paidAt = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
-                      await sb.rpc("pay_client_invoice", { p_project_id: Number(projectId), p_invoice_id: payModal.id, p_paid_at: paidAt, p_owner_user_id: ownerUserIdRef.current || null });
-                    }
-                    setPayDone(prev => ({ ...prev, [payModal.id]: true }));
-                    setPayModal(null);
-                  } catch(err) { /* silently mark as paid locally even if RPC fails */ setPayDone(prev => ({...prev,[payModal.id]:true})); setPayModal(null); }
-                  finally { setPaying(false); }
-                }}
-                style={{ flex:2, padding:"13px 0", background:paying?"#ccc":brandColor, color:"#fff", border:"none", borderRadius:12, fontSize:14, fontWeight:700, cursor:paying?"not-allowed":"pointer", transition:"background .2s" }}>
-                {paying ? "Processing…" : `Confirm Payment`}
-              </button>
+      {/* ── Pay Now modal (uses saved payment methods from Profile) ── */}
+      {payModal && (() => {
+        const methods = (myContact?.paymentMethods || []);
+        const defaultPm = methods.find(m => m.default) || methods[0] || null;
+        const chosenId = selectedPmId || defaultPm?.id || null;
+        const chosen   = methods.find(m => m.id === chosenId) || null;
+        const needsMethod = !chosen;
+        return (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:900, padding:24 }}
+            onClick={e => { if(e.target===e.currentTarget && !paying) setPayModal(null); }}>
+            <div style={{ background:dark?"#1a1a1a":"#fff", borderRadius:20, padding:"30px 28px", maxWidth:440, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)", maxHeight:"90vh", overflowY:"auto" }}>
+              <h3 style={{ fontSize:20, fontWeight:700, color:fg, margin:"0 0 6px" }}>Pay invoice</h3>
+              <p style={{ fontSize:13, color:sub, margin:"0 0 18px" }}>{payModal.title || payModal.description || "Invoice"}</p>
+              <div style={{ background:dark?"rgba(255,255,255,.06)":C.warm, borderRadius:12, padding:"14px 18px", marginBottom:18, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:14, color:sub }}>Amount due</span>
+                <span style={{ fontSize:24, fontWeight:800, color:fg }}>${Number(payModal.total || 0).toLocaleString()}</span>
+              </div>
+
+              {/* Demo banner */}
+              <div style={{ display:"flex", gap:8, padding:"9px 12px", background:dark?"rgba(255,193,7,.1)":"#fff8e1", border:`1px solid ${dark?"rgba(255,193,7,.3)":"#ffe082"}`, borderRadius:9, marginBottom:18 }}>
+                <span style={{ fontSize:11, color:"#8a5a1a", lineHeight:1.5 }}>
+                  <strong>Demo mode</strong> — confirming this won't move real money. Real payments require connecting Stripe.
+                </span>
+              </div>
+
+              {/* Payment-method picker */}
+              <p style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 8px" }}>Pay with</p>
+              {methods.length === 0 ? (
+                <div style={{ padding:"14px 16px", border:`1px dashed ${brd}`, borderRadius:10, marginBottom:14, textAlign:"center" }}>
+                  <p style={{ fontSize:12, color:sub, margin:"0 0 8px" }}>No saved payment methods yet.</p>
+                  <button onClick={() => { setPayModal(null); setTab("profile"); setShowAddCard(true); }}
+                    style={{ padding:"8px 14px", background:brandColor, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                    Add a card on Profile →
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
+                  {methods.map(m => {
+                    const sel = chosenId === m.id;
+                    return (
+                      <button key={m.id} onClick={() => setSelectedPmId(m.id)}
+                        style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 13px", border:`2px solid ${sel ? brandColor : brd}`, borderRadius:11, background: sel ? (dark?"rgba(196,151,74,.1)":"#fdf8f0") : (dark?"rgba(255,255,255,.04)":"#fff"), cursor:"pointer", textAlign:"left", fontFamily:"inherit", color:fg }}>
+                        <div style={{ width:36, height:26, borderRadius:5, background:m.type==="card"?"#0a0a0a":"#2d5a45", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, flexShrink:0 }}>
+                          {m.type === "card" ? (m.brand || "CARD").toUpperCase().slice(0,5) : "BANK"}
+                        </div>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <p style={{ fontSize:13, fontWeight:600, margin:0, color:fg }}>
+                            {m.type === "card" ? `${m.brand || "Card"} ····${m.last4}` : `${m.bankName || "Bank"} ····${m.last4}`}
+                          </p>
+                          <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>
+                            {m.type === "card" ? `Expires ${m.expiryMonth}/${(m.expiryYear||"").toString().slice(-2)}` : (m.accountType || "account")}
+                            {m.default ? " · default" : ""}
+                          </p>
+                        </div>
+                        <div style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${sel ? brandColor : brd}`, background:sel ? brandColor : "transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          {sel && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                  <button onClick={() => { setPayModal(null); setTab("profile"); setShowAddCard(true); }}
+                    style={{ padding:"9px 0", background:"transparent", border:`1px dashed ${brd}`, borderRadius:9, fontSize:12, color:sub, cursor:"pointer", fontFamily:"inherit" }}>
+                    + Add a different payment method
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={() => !paying && setPayModal(null)}
+                  style={{ flex:1, padding:"12px 0", background:"none", border:`1px solid ${brd}`, borderRadius:11, fontSize:13, fontWeight:600, color:fg, cursor:"pointer" }}>
+                  Cancel
+                </button>
+                <button disabled={paying || needsMethod} onClick={async () => {
+                    setPaying(true);
+                    try {
+                      const sb = sbRef.current;
+                      if (sb) {
+                        const paidAt = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+                        await sb.rpc("pay_client_invoice", {
+                          p_project_id:    Number(projectId),
+                          p_invoice_id:    payModal.id,
+                          p_paid_at:       paidAt,
+                          p_owner_user_id: ownerUserIdRef.current || null,
+                        });
+                      }
+                      setPayDone(prev => ({ ...prev, [payModal.id]: true }));
+                      setPayModal(null);
+                    } catch(err) {
+                      // optimistic local update on RPC failure (demo mode tolerates this)
+                      setPayDone(prev => ({...prev,[payModal.id]:true}));
+                      setPayModal(null);
+                    } finally { setPaying(false); }
+                  }}
+                  style={{ flex:2, padding:"12px 0", background:(paying||needsMethod)?"#ccc":brandColor, color:"#fff", border:"none", borderRadius:11, fontSize:13, fontWeight:700, cursor:(paying||needsMethod)?"not-allowed":"pointer", transition:"background .2s" }}>
+                  {paying ? "Processing…" : needsMethod ? "Add a payment method first" : `Pay $${Number(payModal.total || 0).toLocaleString()}`}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Messages tab ── */}
       {tab === "messages" && (() => {
@@ -1135,6 +1363,233 @@ export default function ClientPortalPage({ params }) {
           </div>
         );
       })()}
+
+      {/* ── Profile tab ────────────────────────────────────────────────── */}
+      {tab === "profile" && (() => {
+        // No identity yet → prompt them to identify themselves first.
+        if (!identity || !myContact) {
+          return (
+            <div style={{ maxWidth:520, margin:"0 auto", padding:"60px 24px", textAlign:"center" }}>
+              <div style={{ fontSize:40, marginBottom:14 }}>👤</div>
+              <h2 style={{ fontSize:20, fontWeight:700, color:fg, margin:"0 0 6px" }}>Who are you?</h2>
+              <p style={{ fontSize:13, color:sub, margin:"0 0 18px", lineHeight:1.55 }}>
+                Tell us which contact you are so we can load (and save) your profile.
+              </p>
+              <button onClick={() => setIdentityPickerOpen(true)}
+                style={{ padding:"11px 22px", background:brandColor, color:"#fff", border:"none", borderRadius:12, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                Pick your name
+              </button>
+            </div>
+          );
+        }
+        const methods = (myContact.paymentMethods || []);
+        const cards = methods.filter(m => m.type === "card");
+        const banks = methods.filter(m => m.type === "bank");
+        return (
+          <div style={{ maxWidth:680, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:24 }}>
+            {/* Demo banner */}
+            <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"12px 14px", background:dark?"rgba(255,193,7,.1)":"#fff8e1", border:`1px solid ${dark?"rgba(255,193,7,.3)":"#ffe082"}`, borderRadius:10 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b07a30" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0, marginTop:1 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div>
+                <p style={{ fontSize:12, fontWeight:700, color:"#8a5a1a", margin:"0 0 2px" }}>Demo mode — no real charges</p>
+                <p style={{ fontSize:11, color:dark?"rgba(255,193,7,.85)":"#8a6a3a", margin:0, lineHeight:1.5 }}>
+                  Cards and bank accounts saved here are for testing the experience only. Card numbers are never stored — we keep just the last 4 digits and brand for display.
+                </p>
+              </div>
+            </div>
+
+            {/* Personal info */}
+            <section style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"20px 22px" }}>
+              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:14 }}>
+                <h3 style={{ fontSize:15, fontWeight:700, color:fg, margin:0 }}>Your information</h3>
+                {profileSaved && <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Saved</span>}
+              </div>
+              {profileForm && (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  {[
+                    ["name","Name","text"],
+                    ["email","Email","email"],
+                    ["phone","Phone","tel"],
+                  ].map(([k,label,type]) => (
+                    <label key={k} style={{ display:"flex", flexDirection:"column", gap:4, gridColumn:k==="name"?"1 / -1":"auto" }}>
+                      <span style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6 }}>{label}</span>
+                      <input type={type} value={profileForm[k] || ""} onChange={e => setProfileForm(f => ({...f, [k]: e.target.value}))}
+                        onBlur={saveProfileForm}
+                        style={{ padding:"10px 12px", border:`1px solid ${brd}`, borderRadius:9, background:dark?"rgba(255,255,255,.05)":"#fff", color:fg, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                    </label>
+                  ))}
+                  <label style={{ display:"flex", flexDirection:"column", gap:4, gridColumn:"1 / -1" }}>
+                    <span style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6 }}>Address line</span>
+                    <input value={profileForm.address?.line1 || ""} onChange={e => setProfileForm(f => ({...f, address: {...f.address, line1: e.target.value}}))}
+                      onBlur={saveProfileForm}
+                      style={{ padding:"10px 12px", border:`1px solid ${brd}`, borderRadius:9, background:dark?"rgba(255,255,255,.05)":"#fff", color:fg, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                  </label>
+                  <label style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                    <span style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6 }}>City</span>
+                    <input value={profileForm.address?.city || ""} onChange={e => setProfileForm(f => ({...f, address: {...f.address, city: e.target.value}}))}
+                      onBlur={saveProfileForm}
+                      style={{ padding:"10px 12px", border:`1px solid ${brd}`, borderRadius:9, background:dark?"rgba(255,255,255,.05)":"#fff", color:fg, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                  </label>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <label style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
+                      <span style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6 }}>State</span>
+                      <input value={profileForm.address?.state || ""} onChange={e => setProfileForm(f => ({...f, address: {...f.address, state: e.target.value}}))}
+                        onBlur={saveProfileForm}
+                        style={{ padding:"10px 12px", border:`1px solid ${brd}`, borderRadius:9, background:dark?"rgba(255,255,255,.05)":"#fff", color:fg, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                    </label>
+                    <label style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
+                      <span style={{ fontSize:11, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6 }}>Zip</span>
+                      <input value={profileForm.address?.zip || ""} onChange={e => setProfileForm(f => ({...f, address: {...f.address, zip: e.target.value}}))}
+                        onBlur={saveProfileForm}
+                        style={{ padding:"10px 12px", border:`1px solid ${brd}`, borderRadius:9, background:dark?"rgba(255,255,255,.05)":"#fff", color:fg, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                    </label>
+                  </div>
+                </div>
+              )}
+              <p style={{ fontSize:11, color:sub, margin:"12px 0 0" }}>Changes save automatically when you click out of a field{profileSaving ? " · saving…" : ""}.</p>
+            </section>
+
+            {/* Saved payment methods */}
+            <section style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"20px 22px" }}>
+              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:14 }}>
+                <h3 style={{ fontSize:15, fontWeight:700, color:fg, margin:0 }}>Payment methods</h3>
+                <span style={{ fontSize:11, color:sub }}>{methods.length} saved</span>
+              </div>
+              {methods.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"28px 0", border:`1px dashed ${brd}`, borderRadius:10, marginBottom:14 }}>
+                  <p style={{ fontSize:13, color:sub, margin:0 }}>No saved methods yet — add one below to pay invoices faster.</p>
+                </div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+                  {methods.map(m => (
+                    <div key={m.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:dark?"rgba(255,255,255,.06)":"#fafafa", border:`1px solid ${brd}`, borderRadius:11 }}>
+                      <div style={{ width:42, height:30, borderRadius:6, background:m.type==="card"?"#0a0a0a":"#2d5a45", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, letterSpacing:.5, flexShrink:0 }}>
+                        {m.type === "card" ? (m.brand || "CARD").toUpperCase().slice(0,5) : "BANK"}
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:fg, margin:0 }}>
+                          {m.type === "card"
+                            ? `${m.brand || "Card"} ending in ${m.last4}`
+                            : `${m.bankName || "Bank"} · ${m.accountType || "account"} ending in ${m.last4}`}
+                          {m.default && <span style={{ marginLeft:8, fontSize:10, color:C.green, fontWeight:700, padding:"2px 7px", background:"rgba(74,122,87,.12)", borderRadius:99 }}>DEFAULT</span>}
+                        </p>
+                        <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>
+                          {m.type === "card"
+                            ? `Expires ${m.expiryMonth}/${(m.expiryYear||"").toString().slice(-2)} · ${m.cardholder || ""}`
+                            : `Held by ${m.accountHolder || ""}`}
+                        </p>
+                      </div>
+                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                        {!m.default && (
+                          <button onClick={() => setDefaultMethod(m.id)} disabled={profileSaving}
+                            style={{ padding:"6px 10px", background:"transparent", border:`1px solid ${brd}`, borderRadius:8, fontSize:11, cursor:"pointer", color:fg, fontFamily:"inherit" }}>
+                            Make default
+                          </button>
+                        )}
+                        <button onClick={() => removePaymentMethod(m.id)} disabled={profileSaving}
+                          style={{ padding:"6px 10px", background:"transparent", border:`1px solid ${brd}`, borderRadius:8, fontSize:11, cursor:"pointer", color:"#c25450", fontFamily:"inherit" }}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => { setShowAddCard(true); setPmError(null); }}
+                  style={{ flex:1, padding:"11px 14px", background:brandColor, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  + Add credit/debit card
+                </button>
+                <button onClick={() => { setShowAddBank(true); setPmError(null); }}
+                  style={{ flex:1, padding:"11px 14px", background:dark?"rgba(255,255,255,.08)":"#fff", border:`1px solid ${brd}`, color:fg, borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  + Add bank account
+                </button>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {/* ── Add card modal ─────────────────────────────────────────────── */}
+      {showAddCard && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddCard(false); }}>
+          <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+            <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Add a card</h3>
+            <p style={{ fontSize:12, color:C.muted, margin:"0 0 16px", lineHeight:1.5 }}>Demo mode — only the last 4 digits and brand are saved. Card numbers are never transmitted.</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              <input placeholder="Cardholder name" value={cardDraft.cardholder}
+                onChange={e => setCardDraft(d => ({...d, cardholder: e.target.value}))}
+                style={{ padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+              <div style={{ position:"relative" }}>
+                <input placeholder="Card number" value={formatCardNumber(cardDraft.number)} inputMode="numeric"
+                  onChange={e => setCardDraft(d => ({...d, number: e.target.value.replace(/\D/g,"")}))}
+                  style={{ width:"100%", padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", boxSizing:"border-box", letterSpacing:.5 }}/>
+                {cardDraft.number.length >= 4 && (
+                  <span style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", fontSize:10, fontWeight:700, color:C.muted, letterSpacing:.5 }}>{cardBrand(cardDraft.number).toUpperCase()}</span>
+                )}
+              </div>
+              <div style={{ display:"flex", gap:10 }}>
+                <input placeholder="MM" maxLength={2} inputMode="numeric" value={cardDraft.expiryMonth}
+                  onChange={e => setCardDraft(d => ({...d, expiryMonth: e.target.value.replace(/\D/g,"").slice(0,2)}))}
+                  style={{ flex:1, padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center" }}/>
+                <input placeholder="YYYY" maxLength={4} inputMode="numeric" value={cardDraft.expiryYear}
+                  onChange={e => setCardDraft(d => ({...d, expiryYear: e.target.value.replace(/\D/g,"").slice(0,4)}))}
+                  style={{ flex:1, padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center" }}/>
+                <input placeholder="CVC" maxLength={4} inputMode="numeric" value={cardDraft.cvc}
+                  onChange={e => setCardDraft(d => ({...d, cvc: e.target.value.replace(/\D/g,"").slice(0,4)}))}
+                  style={{ flex:1, padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", textAlign:"center" }}/>
+              </div>
+              {pmError && <p style={{ fontSize:12, color:"#c25450", margin:"4px 0 0" }}>{pmError}</p>}
+              <div style={{ display:"flex", gap:8, marginTop:6 }}>
+                <button onClick={() => setShowAddCard(false)}
+                  style={{ flex:1, padding:"11px 0", background:"transparent", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, fontWeight:600, color:C.ink, cursor:"pointer" }}>Cancel</button>
+                <button onClick={submitCard} disabled={profileSaving}
+                  style={{ flex:2, padding:"11px 0", background:profileSaving?"#ccc":C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:profileSaving?"default":"pointer" }}>
+                  {profileSaving ? "Saving…" : "Save card"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add bank modal ─────────────────────────────────────────────── */}
+      {showAddBank && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddBank(false); }}>
+          <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:420, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+            <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Add a bank account</h3>
+            <p style={{ fontSize:12, color:C.muted, margin:"0 0 16px", lineHeight:1.5 }}>Demo mode — only the last 4 digits of the account are saved.</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              <input placeholder="Account holder name" value={bankDraft.accountHolder}
+                onChange={e => setBankDraft(d => ({...d, accountHolder: e.target.value}))}
+                style={{ padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+              <input placeholder="Routing number (9 digits)" inputMode="numeric" value={bankDraft.routing}
+                onChange={e => setBankDraft(d => ({...d, routing: e.target.value.replace(/\D/g,"").slice(0,9)}))}
+                style={{ padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", letterSpacing:.5 }}/>
+              <input placeholder="Account number" inputMode="numeric" value={bankDraft.account}
+                onChange={e => setBankDraft(d => ({...d, account: e.target.value.replace(/\D/g,"").slice(0,17)}))}
+                style={{ padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", letterSpacing:.5 }}/>
+              <select value={bankDraft.accountType}
+                onChange={e => setBankDraft(d => ({...d, accountType: e.target.value}))}
+                style={{ padding:"11px 13px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit", background:"#fff" }}>
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+              </select>
+              {pmError && <p style={{ fontSize:12, color:"#c25450", margin:"4px 0 0" }}>{pmError}</p>}
+              <div style={{ display:"flex", gap:8, marginTop:6 }}>
+                <button onClick={() => setShowAddBank(false)}
+                  style={{ flex:1, padding:"11px 0", background:"transparent", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, fontWeight:600, color:C.ink, cursor:"pointer" }}>Cancel</button>
+                <button onClick={submitBank} disabled={profileSaving}
+                  style={{ flex:2, padding:"11px 0", background:profileSaving?"#ccc":C.ink, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:profileSaving?"default":"pointer" }}>
+                  {profileSaving ? "Saving…" : "Save account"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Identity picker modal (shared chat) ── */}
       {identityPickerOpen && (() => {
