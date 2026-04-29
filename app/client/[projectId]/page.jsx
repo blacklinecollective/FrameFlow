@@ -215,6 +215,27 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
     if (videoRef.current) videoRef.current.currentTime = ts;
   };
 
+  // ── Native fullscreen — works on every modern browser, including iOS
+  // Safari (where webkitEnterFullscreen is the only path that triggers
+  // the native edge-to-edge player with auto-orientation). The native UI
+  // gives the client landscape lock + controls, so they can't leave a
+  // timestamped note while in fullscreen — exactly the documented tradeoff.
+  const enterFullscreen = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (typeof v.requestFullscreen === "function") {
+        v.requestFullscreen();
+      } else if (typeof v.webkitEnterFullscreen === "function") {
+        v.webkitEnterFullscreen(); // iOS Safari
+      } else if (typeof v.webkitRequestFullscreen === "function") {
+        v.webkitRequestFullscreen();
+      } else if (typeof v.msRequestFullscreen === "function") {
+        v.msRequestFullscreen();
+      }
+    } catch (_) {}
+  };
+
   // ── List view ──────────────────────────────────────────────────────────────
   if (!selDelId || !selDel) {
     return (
@@ -419,16 +440,35 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
               {/* Buttons */}
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                 <button onClick={() => { const t = Math.max(0,playhead-10); setPlayhead(t); if(videoRef.current) videoRef.current.currentTime=t; }}
-                  style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(255,255,255,.5)", fontSize:18, lineHeight:1, padding:"2px 4px" }}>⏪</button>
+                  title="Back 10 seconds"
+                  style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(255,255,255,.5)", fontSize:18, lineHeight:1, padding:"4px 6px", minWidth:32, minHeight:32 }}>⏪</button>
                 <button onClick={() => { if(playing){videoRef.current?.pause();}else{videoRef.current?.play().catch(()=>{});}setPlaying(p=>!p); }}
-                  style={{ width:32, height:32, borderRadius:8, background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.2)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  title={playing ? "Pause" : "Play"}
+                  style={{ width:36, height:36, borderRadius:9, background:"rgba(255,255,255,.14)", border:"1px solid rgba(255,255,255,.22)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                   {playing
-                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                    : <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
+                    ? <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    : <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
                 </button>
                 <button onClick={() => { const t = Math.min(dur,playhead+10); setPlayhead(t); if(videoRef.current) videoRef.current.currentTime=t; }}
-                  style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(255,255,255,.5)", fontSize:18, lineHeight:1, padding:"2px 4px" }}>⏩</button>
-                <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.4)", marginLeft:4 }}>{fmt(playhead)} / {fmt(dur)}</span>
+                  title="Forward 10 seconds"
+                  style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(255,255,255,.5)", fontSize:18, lineHeight:1, padding:"4px 6px", minWidth:32, minHeight:32 }}>⏩</button>
+                <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,.45)", marginLeft:6 }}>{fmt(playhead)} / {fmt(dur)}</span>
+                {/* Fullscreen — pushes the player into native edge-to-edge
+                    mode (iOS uses webkitEnterFullscreen with the system
+                    player). Notes can't be added in fullscreen — that's
+                    intentional; the client just watches. */}
+                <div style={{ flex:1 }}/>
+                <button onClick={enterFullscreen}
+                  title="Watch fullscreen"
+                  style={{ display:"flex", alignItems:"center", gap:6, height:36, padding:"0 12px", borderRadius:9, background:"rgba(255,255,255,.14)", border:"1px solid rgba(255,255,255,.22)", cursor:"pointer", color:"#fff", fontSize:11, fontWeight:600, fontFamily:"inherit" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+                    <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                    <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+                    <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                  </svg>
+                  Fullscreen
+                </button>
               </div>
             </div>
           )}
