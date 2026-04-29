@@ -489,7 +489,7 @@ export default function ClientPortalPage({ params }) {
   const [fetchErr, setFetchErr] = useState(null);
   const [unlocked, setUnlocked] = useState(false);
   const [data,     setData]     = useState(null);
-  const [tab,      setTab]      = useState("gallery");
+  const [tab,      setTab]      = useState("home");
   const [favs,     setFavs]     = useState([]);
   const [lightbox, setLightbox] = useState(null);
   // Currently-selected folder on the gallery tab. null = folder grid view
@@ -769,6 +769,7 @@ export default function ClientPortalPage({ params }) {
   const hasVideos = videoDeliverables.length > 0;
 
   const TABS = [
+    { id:"home",     label:"Home",        show: true },
     { id:"gallery",  label:"Gallery",     show: true },
     { id:"video",    label:"Video Review",show: hasVideos },
     { id:"progress", label:"Progress",    show: true },
@@ -1068,6 +1069,156 @@ export default function ClientPortalPage({ params }) {
           </button>
         ))}
       </div>
+
+      {/* ── Home tab (welcoming greeting + at-a-glance overview) ──────
+          Lands the visitor with a warm hello, a snapshot of the project's
+          current state, and quick links into every other tab. Pulls
+          everything from data already loaded by the RPC — no extra
+          network calls.                                                  */}
+      {tab === "home" && (() => {
+        const firstName  = (identity?.name || project?.client || "there").split(" ")[0];
+        const photoCount = photos.length;
+        const videoCount = videoDeliverables.length;
+        const checklistTotal = (project?.checklist || []).length;
+        const checklistDone  = (project?.checklist || []).filter(c => c.checked).length;
+        const checklistPct   = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : 0;
+        const openInvCount   = openInvoices.length;
+        // Total unread message count is a soft signal — we don't track read
+        // status server-side, so just report the size of the project chat.
+        const totalThreadMsgs = Object.values(threads || {}).reduce((s,t) => s + ((t?.messages||[]).length), 0);
+        // Find next upcoming checklist deadline (not yet checked off).
+        const nextDeadline = (project?.checklist || [])
+          .filter(c => !c.checked && c.due)
+          .map(c => ({ ...c, _dt: new Date(c.due + "T00:00:00") }))
+          .filter(c => !isNaN(c._dt.getTime()))
+          .sort((a,b) => a._dt - b._dt)[0];
+        const fmtNice = (iso) => {
+          const d = new Date(iso + "T00:00:00");
+          if (isNaN(d.getTime())) return iso;
+          const sameYear = d.getFullYear() === new Date().getFullYear();
+          return d.toLocaleDateString("en-US", sameYear
+            ? { weekday:"short", month:"short", day:"numeric" }
+            : { month:"short", day:"numeric", year:"numeric" });
+        };
+        const greeting = (() => {
+          const h = new Date().getHours();
+          if (h < 5)  return "Hi";
+          if (h < 12) return "Good morning,";
+          if (h < 17) return "Good afternoon,";
+          if (h < 22) return "Good evening,";
+          return "Hi";
+        })();
+        // Tile shortcuts — clicking switches the active tab.
+        const shortcuts = [
+          { id:"gallery",  label:"Your gallery",   sub: photoCount > 0 ? `${photoCount} photo${photoCount===1?"":"s"} ready` : "Photos coming soon", icon:"M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 12L11 14.5l3.5-4.5 4.5 6H5l3.5-4z" },
+          ...(hasVideos ? [{ id:"video", label:"Video review", sub:`${videoCount} deliverable${videoCount===1?"":"s"} to review`, icon:"M23 7l-7 5 7 5V7zM14 5H3a2 2 0 00-2 2v10a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2z" }] : []),
+          { id:"progress", label:"Progress",       sub: checklistTotal > 0 ? `${checklistDone} of ${checklistTotal} milestones complete` : "Updates coming soon", icon:"M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" },
+          { id:"invoice",  label:"Invoices",       sub: openInvCount > 0 ? `$${totalDue.toLocaleString()} due` : "Nothing due", icon:"M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M16 13H8M16 17H8M10 9H8" },
+          { id:"messages", label:"Messages",       sub: totalThreadMsgs > 0 ? `${totalThreadMsgs} message${totalThreadMsgs===1?"":"s"} in thread` : `Say hello to ${studioName}`, icon:"M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" },
+          { id:"profile",  label:"Your info",      sub:"Contact details + saved payment", icon:"M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M16 7a4 4 0 11-8 0 4 4 0 018 0z" },
+        ];
+        return (
+          <div style={{ maxWidth:1000, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:22 }}>
+
+            {/* ── Hero greeting ── */}
+            <div style={{ background:`linear-gradient(135deg, ${portalAccent}18 0%, ${dark?"rgba(255,255,255,.04)":"#fff"} 100%)`, border:`1px solid ${brd}`, borderRadius:18, padding:"36px 32px", display:"flex", alignItems:"center", gap:24, flexWrap:"wrap" }}>
+              <div style={{ flex:1, minWidth:240 }}>
+                <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:2, margin:"0 0 6px", fontWeight:600 }}>{project?.type || "Your project"}</p>
+                <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 6px", lineHeight:1.1 }}>
+                  {greeting} {firstName}.
+                </h1>
+                <p style={{ fontSize:14, color:sub, margin:"0 0 16px", lineHeight:1.6, maxWidth:520 }}>
+                  Welcome to the portal for <strong style={{ color:fg }}>{project?.name || "your project"}</strong> with {studioName}. Everything you need lives here — pictures, videos, invoices, messages, and the latest project updates.
+                </p>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {photoCount > 0 && (
+                    <button onClick={() => setTab("gallery")}
+                      style={{ padding:"10px 18px", background:portalAccent, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                      View your gallery →
+                    </button>
+                  )}
+                  {hasVideos && (
+                    <button onClick={() => setTab("video")}
+                      style={{ padding:"10px 18px", background:dark?"rgba(255,255,255,.08)":"#fff", color:fg, border:`1px solid ${brd}`, borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                      Review videos →
+                    </button>
+                  )}
+                  {openInvCount > 0 && (
+                    <button onClick={() => setTab("invoice")}
+                      style={{ padding:"10px 18px", background:dark?"rgba(255,255,255,.08)":"#fff", color:fg, border:`1px solid ${brd}`, borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                      ${totalDue.toLocaleString()} due →
+                    </button>
+                  )}
+                </div>
+              </div>
+              {project?.status && (
+                <div style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"18px 22px", minWidth:200 }}>
+                  <p style={{ fontSize:11, color:sub, textTransform:"uppercase", letterSpacing:.6, fontWeight:600, margin:"0 0 6px" }}>Project status</p>
+                  <p style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:500, color:fg, margin:"0 0 12px", lineHeight:1 }}>{project.status}</p>
+                  {checklistTotal > 0 && (
+                    <>
+                      <div style={{ background:dark?"rgba(255,255,255,.1)":C.border, borderRadius:99, height:5, overflow:"hidden", marginBottom:6 }}>
+                        <div style={{ height:"100%", width:`${checklistPct}%`, background:portalAccent, borderRadius:99, transition:"width .4s" }}/>
+                      </div>
+                      <p style={{ fontSize:11, color:sub, margin:0 }}>{checklistDone}/{checklistTotal} milestones complete</p>
+                    </>
+                  )}
+                  {nextDeadline && (
+                    <p style={{ fontSize:11, color:sub, margin:"10px 0 0", lineHeight:1.5 }}>
+                      <span style={{ fontWeight:700, color:fg }}>Next:</span> {nextDeadline.text} <br/>
+                      <span style={{ color:portalAccent, fontWeight:600 }}>by {fmtNice(nextDeadline.due)}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Quick stats ── */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:12 }}>
+              {[
+                { label:"Photos",     value: photoCount.toLocaleString() },
+                { label:"Videos",     value: videoCount.toLocaleString() },
+                { label:"Outstanding", value: openInvCount > 0 ? `$${totalDue.toLocaleString()}` : "$0" },
+                { label:"Folders",    value: (galleryFolders?.length || 0).toLocaleString() },
+              ].map(s => (
+                <div key={s.label} style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:12, padding:"14px 18px" }}>
+                  <p style={{ fontSize:11, color:sub, textTransform:"uppercase", letterSpacing:.6, fontWeight:600, margin:"0 0 4px" }}>{s.label}</p>
+                  <p style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:26, fontWeight:500, color:fg, margin:0, lineHeight:1 }}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Quick-link tiles ── */}
+            <div>
+              <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:1, fontWeight:600, margin:"0 0 12px" }}>Jump to</p>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:12 }}>
+                {shortcuts.map(s => (
+                  <button key={s.id} onClick={() => setTab(s.id)}
+                    style={{ display:"flex", alignItems:"flex-start", gap:14, padding:"16px 18px", background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:12, cursor:"pointer", textAlign:"left", fontFamily:"inherit", transition:"transform .15s, box-shadow .15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 6px 16px rgba(0,0,0,.06)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform="none"; e.currentTarget.style.boxShadow="none"; }}>
+                    <div style={{ width:40, height:40, borderRadius:10, background:`${portalAccent}1a`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={portalAccent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d={s.icon}/>
+                      </svg>
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontSize:14, fontWeight:700, color:fg, margin:0 }}>{s.label}</p>
+                      <p style={{ fontSize:12, color:sub, margin:"3px 0 0", lineHeight:1.5 }}>{s.sub}</p>
+                    </div>
+                    <span style={{ color:sub, fontSize:14, lineHeight:1, marginTop:6 }}>→</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── A tasteful welcome footer note ── */}
+            <p style={{ fontSize:11, color:sub, textAlign:"center", margin:"6px 0 0", fontStyle:"italic" }}>
+              Questions? Hop into <button onClick={() => setTab("messages")} style={{ background:"none", border:"none", color:portalAccent, fontWeight:600, cursor:"pointer", padding:0, fontSize:11, fontFamily:"inherit" }}>Messages</button> — {studioName} will get back to you here.
+            </p>
+          </div>
+        );
+      })()}
 
       {/* ── Gallery tab ── */}
       {tab === "gallery" && (() => {
