@@ -237,28 +237,33 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
               const openCmts = allCmts.filter(c => !c.resolved).length;
               return (
                 <div key={del.id} onClick={() => openDel(del)}
+                  className="ff-vrev-card"
                   style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:16, overflow:"hidden", cursor:"pointer", display:"flex", transition:"box-shadow .15s" }}
                   onMouseEnter={e => e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.08)"}
                   onMouseLeave={e => e.currentTarget.style.boxShadow="none"}>
-                  {/* Thumbnail */}
-                  <div style={{ width:160, flexShrink:0, position:"relative", background:"#0a0a0a", minHeight:110, overflow:"hidden" }}>
-                    {latest.url && (
+                  {/* Thumbnail — prefer the version's cover image (rendered
+                      server-side at upload). Falls back to the video tag's
+                      first-frame when no cover is available. */}
+                  <div className="ff-vrev-thumb" style={{ width:200, flexShrink:0, position:"relative", background:"#0a0a0a", minHeight:120, overflow:"hidden" }}>
+                    {latest.cover ? (
+                      <img src={latest.cover} alt="" style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}/>
+                    ) : latest.url ? (
                       <video src={latest.url} preload="metadata" muted playsInline
                         style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }}/>
-                    )}
-                    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.35)" }}>
-                      <div style={{ width:44, height:44, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"2px solid rgba(255,255,255,.5)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    ) : null}
+                    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.3)" }}>
+                      <div style={{ width:48, height:48, borderRadius:"50%", background:"rgba(0,0,0,.6)", border:"2px solid rgba(255,255,255,.55)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                       </div>
                     </div>
                     {latest.duration && (
-                      <div style={{ position:"absolute", bottom:6, right:8, background:"rgba(0,0,0,.7)", color:"#fff", fontSize:10, fontFamily:"monospace", padding:"2px 6px", borderRadius:4 }}>
+                      <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(0,0,0,.75)", color:"#fff", fontSize:11, fontFamily:"monospace", padding:"2px 7px", borderRadius:5 }}>
                         {fmt(latest.duration)}
                       </div>
                     )}
                   </div>
                   {/* Info */}
-                  <div style={{ padding:18, flex:1 }}>
+                  <div className="ff-vrev-info" style={{ padding:18, flex:1, minWidth:0 }}>
                     <p style={{ fontSize:15, fontWeight:700, color:fg, margin:"0 0 4px" }}>{del.title}</p>
                     <p style={{ fontSize:12, color:sub, margin:"0 0 10px" }}>
                       {del.versions.length} version{del.versions.length!==1?"s":""} · Latest: {latest.label} · {latest.uploadedAt}
@@ -278,19 +283,20 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
                       <p style={{ fontSize:12, color:sub, margin:"10px 0 0", lineHeight:1.5 }}>📝 {latest.notes}</p>
                     )}
                   </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:10, paddingRight:12 }}>
+                  <div className="ff-vrev-actions" style={{ display:"flex", alignItems:"center", gap:10, paddingRight:14, flexShrink:0 }}>
                     <button
                       onClick={e => { e.stopPropagation(); if (latest.url) downloadVideo(latest.url, `${del.title || "video"}.mp4`); }}
                       title={latest.url ? "Download video" : "Video not yet available for download"}
                       disabled={!latest.url}
-                      style={{ width:34, height:34, borderRadius:8, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:latest.url?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, opacity:latest.url?1:0.35 }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      style={{ display:"flex", alignItems:"center", gap:6, height:40, padding:"0 14px", borderRadius:9, background:dark?"rgba(255,255,255,.1)":C.warm, border:`1px solid ${brd}`, cursor:latest.url?"pointer":"not-allowed", flexShrink:0, opacity:latest.url?1:0.35, fontFamily:"inherit", color:fg, fontSize:12, fontWeight:600 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="7 10 12 15 17 10"/>
                         <line x1="12" y1="15" x2="12" y2="3"/>
                       </svg>
+                      Download
                     </button>
-                    <span style={{ color:sub, fontSize:18 }}>›</span>
+                    <span style={{ color:sub, fontSize:20 }}>›</span>
                   </div>
                 </div>
               );
@@ -305,22 +311,22 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
   const sorted = [...verCmts].sort((a, b) => a.ts - b.ts);
 
   return (
-    <div style={{ maxWidth:1100, margin:"0 auto", padding:"24px 24px" }}>
+    <div style={{ maxWidth:1100, margin:"0 auto", padding:"24px 18px" }}>
       {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+      <div className="ff-vrev-header" style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
         <button onClick={() => setSelDelId(null)}
-          style={{ background:"none", border:`1px solid ${brd}`, borderRadius:8, padding:"6px 12px", fontSize:12, color:sub, cursor:"pointer" }}>
+          style={{ background:"none", border:`1px solid ${brd}`, borderRadius:8, padding:"8px 14px", fontSize:12, color:fg, cursor:"pointer", fontFamily:"inherit", minHeight:40, fontWeight:600 }}>
           ← All Videos
         </button>
-        <div style={{ flex:1 }}>
-          <p style={{ fontSize:15, fontWeight:700, color:fg, margin:0 }}>{selDel.title}</p>
-          <p style={{ fontSize:11, color:sub, margin:0 }}>{selVer?.label} · {selVer?.uploadedAt}</p>
+        <div style={{ flex:1, minWidth:0 }}>
+          <p style={{ fontSize:15, fontWeight:700, color:fg, margin:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{selDel.title}</p>
+          <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>{selVer?.label} · {selVer?.uploadedAt}</p>
         </div>
         {/* Version switcher */}
-        <div style={{ display:"flex", gap:5 }}>
+        <div className="ff-vrev-versions" style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
           {selDel.versions.map((v, vi) => (
             <button key={v.id} onClick={() => { setSelVerId(v.id); setPlayhead(0); setPlaying(false); }}
-              style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${selVerId===v.id?fg:brd}`, background:selVerId===v.id?fg:dark?"rgba(255,255,255,.06)":"#fff", color:selVerId===v.id?"#fff":sub, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+              style={{ padding:"7px 14px", borderRadius:8, border:`1px solid ${selVerId===v.id?fg:brd}`, background:selVerId===v.id?fg:dark?"rgba(255,255,255,.06)":"#fff", color:selVerId===v.id?"#fff":sub, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit", minHeight:36 }}>
               {v.label}{vi===selDel.versions.length-1?" ✦":""}
             </button>
           ))}
@@ -330,8 +336,8 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
           onClick={() => { if (selVer?.url) downloadVideo(selVer.url, `${selDel.title || "video"} - ${selVer.label || "video"}.mp4`); }}
           title={selVer?.url ? "Download this version" : "Video not yet available for download"}
           disabled={!selVer?.url}
-          style={{ padding:"5px 12px", borderRadius:8, border:`1px solid ${brd}`, background:dark?"rgba(255,255,255,.06)":"#fff", color:sub, fontSize:11, fontWeight:600, cursor:selVer?.url?"pointer":"not-allowed", display:"flex", alignItems:"center", gap:5, opacity:selVer?.url?1:0.4 }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          style={{ padding:"7px 14px", borderRadius:8, border:"none", background:selVer?.url?brandColor:"#ccc", color:"#fff", fontSize:12, fontWeight:700, cursor:selVer?.url?"pointer":"not-allowed", display:"flex", alignItems:"center", gap:6, opacity:selVer?.url?1:0.5, minHeight:36, fontFamily:"inherit" }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
@@ -348,10 +354,10 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
         </div>
       )}
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
+      <div className="ff-vrev-player-grid" style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
 
         {/* ── Video player ── */}
-        <div style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden" }}>
+        <div className="ff-vrev-player" style={{ background:"#0a0a0a", borderRadius:14, overflow:"hidden", minWidth:0 }}>
           <div style={{ position:"relative", minHeight:300, display:"flex", alignItems:"center", justifyContent:"center", background:"#000" }}>
             {selVer?.url ? (
               <video key={selVer.url} ref={videoRef} src={selVer.url} preload="auto" playsInline
@@ -429,7 +435,7 @@ function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, vi
         </div>
 
         {/* ── Notes panel ── */}
-        <div>
+        <div className="ff-vrev-notes" style={{ minWidth:0 }}>
           {/* Add note */}
           <div style={{ background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:16, marginBottom:12 }}>
             <p style={{ fontSize:11, fontWeight:700, color:sub, textTransform:"uppercase", letterSpacing:.5, margin:"0 0 10px" }}>
@@ -1076,6 +1082,17 @@ export default function ClientPortalPage({ params }) {
           /* Messages tab: take the rest of the viewport so the compose
              stays glued to the bottom on phone keyboards. */
           .ff-portal-msg-wrap { height: calc(100dvh - 110px) !important; }
+          /* Video Review — stack list cards and player vertically. */
+          .ff-vrev-card { flex-direction: column !important; }
+          .ff-vrev-thumb { width: 100% !important; aspect-ratio: 16 / 9 !important; min-height: 0 !important; }
+          .ff-vrev-info { padding: 14px !important; }
+          .ff-vrev-actions { padding: 0 14px 14px !important; flex-direction: row-reverse !important; justify-content: flex-end !important; gap: 12px !important; }
+          .ff-vrev-actions span { display: none !important; }
+          .ff-vrev-player-grid { grid-template-columns: 1fr !important; }
+          .ff-vrev-player { width: 100% !important; }
+          .ff-vrev-notes { width: 100% !important; }
+          .ff-vrev-header { gap: 10px !important; }
+          .ff-vrev-versions button { padding: 8px 12px !important; font-size: 12px !important; min-height: 36px !important; }
         }
         @media (max-width: 420px) {
           .ff-portal-gallery-cols { columns: 1 !important; }
