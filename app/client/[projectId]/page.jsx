@@ -769,13 +769,23 @@ export default function ClientPortalPage({ params }) {
   const hasVideos = videoDeliverables.length > 0;
 
   const TABS = [
-    { id:"gallery",  label:"Gallery",  show: true },
-    { id:"video",    label:"Video Review", show: hasVideos },
-    { id:"progress", label:"Progress", show: true },
-    { id:"invoice",  label:"Invoice",  show: true },
-    { id:"messages", label:"Messages", show: true },
-    { id:"profile",  label:"Profile",  show: true },
+    { id:"gallery",  label:"Gallery",     show: true },
+    { id:"video",    label:"Video Review",show: hasVideos },
+    { id:"progress", label:"Progress",    show: true },
+    { id:"invoice",  label:"Invoice",     show: true },
+    { id:"messages", label:"Messages",    show: true },
+    { id:"profile",  label:"Profile",     show: true },
+    { id:"rewards",  label:"Rewards ✦",   show: true },
   ].filter(t => t.show);
+
+  // ── Brand-aligned palette (matches ClientDashboard header style) ──
+  // The ClientDashboard component used a dark header bar with the studio's
+  // accent color for the brand pill. We mirror it here so both surfaces
+  // (in-app preview + public link) feel like the same product.
+  const portalAccent = brandKit?.primaryColor || "#b8976a";
+  const portalDark   = brandKit?.darkColor    || "#1a1a1a";
+  const studioInit   = brandKit?.initials || (studioName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase() || "ST");
+  const visitorInits = identity ? initials(identity.name) : "?";
 
   const checklist = project.checklist || [];
   const done = checklist.filter(c => c.checked).length;
@@ -1017,24 +1027,46 @@ export default function ClientPortalPage({ params }) {
   return (
     <div style={{ minHeight:"100vh", background:bg, color:fg, fontFamily:"Inter, system-ui, sans-serif" }}>
 
-      {/* ── Nav ── */}
-      <div style={{ background:bg, borderBottom:`1px solid ${brd}`, padding:"0 24px", display:"flex", alignItems:"center", gap:16, position:"sticky", top:0, zIndex:100 }}>
-        {brandKit.logoUrl
-          ? <img src={brandKit.logoUrl} alt={studioName} style={{ height:32, objectFit:"contain" }}/>
-          : <span style={{ fontSize:15, fontWeight:700, color:fg, padding:"16px 0" }}>{studioName}</span>
-        }
-        <div style={{ flex:1 }}/>
-        <div style={{ display:"flex", gap:2, overflowX:"auto" }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ padding:"16px 14px", fontSize:12, fontWeight:tab===t.id?700:400, color:tab===t.id?fg:sub, background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?brandColor:"transparent"}`, cursor:"pointer", whiteSpace:"nowrap", transition:"all .15s" }}>
-              {t.label}
-              {t.id==="video" && videoDeliverables.length > 0 && (
-                <span style={{ marginLeft:5, background:brandColor, color:"#fff", borderRadius:99, fontSize:9, fontWeight:700, padding:"1px 5px" }}>{videoDeliverables.length}</span>
-              )}
-            </button>
-          ))}
+      {/* ── Brand header (matches in-app ClientDashboard styling) ── */}
+      <div style={{ background:portalDark, padding:"0 28px", height:62, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:101 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14, minWidth:0 }}>
+          {brandKit.logoUrl
+            ? <img src={brandKit.logoUrl} alt={studioName} style={{ height:34, objectFit:"contain" }}/>
+            : (
+              <div style={{ width:36, height:36, background:portalAccent, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <span style={{ fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{studioInit}</span>
+              </div>
+            )}
+          <div style={{ minWidth:0 }}>
+            <p style={{ fontSize:15, fontWeight:600, color:"#f5f2ee", margin:0, lineHeight:1, fontFamily:"'Cormorant Garamond', Georgia, serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{studioName}</p>
+            <p style={{ fontSize:11, color:"rgba(255,255,255,.45)", margin:"3px 0 0" }}>Client Portal</p>
+          </div>
         </div>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={() => { setPickerNameDraft(identity?.name || ""); setIdentityPickerOpen(true); }}
+            title={identity ? "Change identity" : "Pick your identity"}
+            style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,.08)", borderRadius:99, padding:"6px 14px 6px 6px", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+            <span style={{ width:26, height:26, borderRadius:"50%", background: identity ? colorForName(identity.name) : "rgba(255,255,255,.15)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
+              {visitorInits}
+            </span>
+            <span style={{ fontSize:12, color:"rgba(255,255,255,.78)", whiteSpace:"nowrap" }}>
+              {identity ? identity.name : "Who are you?"}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Tab strip (light row under the brand header) ── */}
+      <div style={{ background:bg, borderBottom:`1px solid ${brd}`, padding:"0 28px", display:"flex", alignItems:"center", gap:2, overflowX:"auto", position:"sticky", top:62, zIndex:100 }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ padding:"15px 16px", fontSize:13, fontWeight:tab===t.id?700:500, color:tab===t.id?fg:sub, background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?portalAccent:"transparent"}`, cursor:"pointer", whiteSpace:"nowrap", transition:"all .15s", fontFamily:"inherit" }}>
+            {t.label}
+            {t.id==="video" && videoDeliverables.length > 0 && (
+              <span style={{ marginLeft:6, background:portalAccent, color:"#fff", borderRadius:99, fontSize:9, fontWeight:700, padding:"1px 6px" }}>{videoDeliverables.length}</span>
+            )}
+          </button>
+        ))}
       </div>
 
       {/* ── Gallery tab ── */}
@@ -1804,6 +1836,98 @@ export default function ClientPortalPage({ params }) {
                 </button>
               </div>
             </section>
+          </div>
+        );
+      })()}
+
+      {/* ── Rewards tab ────────────────────────────────────────────────
+          A simple loyalty card per client. Real loyalty hookup (points,
+          tier thresholds, referral history) plugs in here later — for
+          now we surface a tier badge derived from how many invoices the
+          client has paid + a placeholder referral code so the section
+          isn't empty.                                                    */}
+      {tab === "rewards" && (() => {
+        const paidCount = invoices.filter(i => i.status === "Paid" || payDone[i.id]).length;
+        const totalSpent = invoices.reduce((s,i) => s + (Number(i.total) || 0), 0);
+        const tier = paidCount >= 5 || totalSpent >= 25000 ? "platinum"
+                   : paidCount >= 2 || totalSpent >= 8000  ? "gold"
+                   : "silver";
+        const tierColors = {
+          silver:   { bg:"#e8e8ec", color:"#7a7c80", label:"Silver",   icon:"✦" },
+          gold:     { bg:"#f6e5b9", color:"#8a6a2a", label:"Gold",     icon:"✦✦" },
+          platinum: { bg:"#d8d2e4", color:"#5a4e8a", label:"Platinum", icon:"✦✦✦" },
+        };
+        const tc = tierColors[tier];
+        const points = Math.round(totalSpent / 10); // simple placeholder: 10pt per $100 spent
+        const refCode = (myContact?.id || identity?.slug || "VIP") + "-PORTAL";
+        return (
+          <div style={{ maxWidth:780, margin:"0 auto", padding:"32px 24px", display:"flex", flexDirection:"column", gap:20 }}>
+            {/* Tier card */}
+            <div style={{ background:`linear-gradient(135deg, ${tc.bg} 0%, ${dark?"rgba(255,255,255,.06)":"#fff"} 100%)`, border:`1px solid ${brd}`, borderRadius:18, padding:"28px 28px", display:"flex", alignItems:"center", gap:22, flexWrap:"wrap" }}>
+              <div style={{ width:78, height:78, borderRadius:"50%", background:tc.color, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, fontWeight:700, flexShrink:0 }}>
+                {tc.icon}
+              </div>
+              <div style={{ flex:1, minWidth:200 }}>
+                <p style={{ fontSize:11, color:sub, textTransform:"uppercase", letterSpacing:1.4, margin:"0 0 4px", fontWeight:700 }}>{identity?.name ? `${identity.name.split(" ")[0]}'s status` : "Your status"}</p>
+                <p style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:34, fontWeight:500, color:fg, margin:0, lineHeight:1 }}>{tc.label} member</p>
+                <p style={{ fontSize:13, color:sub, margin:"6px 0 0", lineHeight:1.5 }}>
+                  Earned through {paidCount} paid invoice{paidCount===1?"":"s"} totaling ${totalSpent.toLocaleString()} with {studioName}.
+                </p>
+              </div>
+            </div>
+
+            {/* Stats grid */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))", gap:14 }}>
+              {[
+                { label:"Loyalty points", value: points.toLocaleString() },
+                { label:"Tier",          value: tc.label },
+                { label:"Discount",      value: tier === "platinum" ? "10%" : tier === "gold" ? "5%" : "—" },
+                { label:"Referrals",     value: "0" },
+              ].map(s => (
+                <div key={s.label} style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:12, padding:"16px 18px" }}>
+                  <p style={{ fontSize:11, color:sub, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 4px", fontWeight:600 }}>{s.label}</p>
+                  <p style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:500, color:fg, margin:0, lineHeight:1 }}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Referral code */}
+            <div style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"22px 24px" }}>
+              <p style={{ fontSize:13, fontWeight:700, color:fg, margin:"0 0 4px" }}>Refer & earn</p>
+              <p style={{ fontSize:12, color:sub, margin:"0 0 14px", lineHeight:1.5 }}>
+                Share your code with a friend. When they book their first session with {studioName}, you both get 10% off.
+              </p>
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:dark?"rgba(255,255,255,.06)":"#fafafa", border:`1px dashed ${brd}`, borderRadius:10 }}>
+                <code style={{ flex:1, fontSize:14, fontFamily:"ui-monospace, SF Mono, monospace", color:fg, letterSpacing:1.2, fontWeight:600, userSelect:"all" }}>{refCode.toUpperCase()}</code>
+                <button onClick={async () => { await copyToClipboard(refCode.toUpperCase()); }}
+                  style={{ padding:"7px 14px", background:portalAccent, color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0 }}>
+                  Copy code
+                </button>
+              </div>
+            </div>
+
+            {/* How to earn more */}
+            <div style={{ background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:14, padding:"22px 24px" }}>
+              <p style={{ fontSize:13, fontWeight:700, color:fg, margin:"0 0 14px" }}>How rewards work</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                {[
+                  ["✦",   "Silver",   "Welcome tier — for everyone who books with us."],
+                  ["✦✦",  "Gold",     "After 2 paid invoices or $8,000 lifetime spend. Unlocks 5% off future bookings."],
+                  ["✦✦✦", "Platinum", "After 5 paid invoices or $25,000 lifetime spend. Unlocks 10% off + priority scheduling."],
+                ].map(([icon, label, blurb]) => (
+                  <div key={label} style={{ display:"flex", alignItems:"flex-start", gap:14, padding:"12px 14px", borderRadius:10, background: tier === label.toLowerCase() ? (dark?"rgba(255,255,255,.06)":"#fdfaf3") : "transparent", border:`1px solid ${tier === label.toLowerCase() ? portalAccent : brd}` }}>
+                    <span style={{ width:34, height:34, borderRadius:"50%", background:tierColors[label.toLowerCase()].color, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>{icon}</span>
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontSize:13, fontWeight:700, color:fg, margin:0 }}>
+                        {label}
+                        {tier === label.toLowerCase() && <span style={{ marginLeft:8, fontSize:10, color:portalAccent, fontWeight:700, padding:"2px 8px", borderRadius:99, background:`${portalAccent}22`, textTransform:"uppercase", letterSpacing:.6 }}>You</span>}
+                      </p>
+                      <p style={{ fontSize:12, color:sub, margin:"3px 0 0", lineHeight:1.5 }}>{blurb}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         );
       })()}

@@ -26698,25 +26698,25 @@ function AppShell({ supabaseSession, supabaseClient }) {
     return <ClientLoginScreen
       clients={crmClients}
       loyaltyConfig={loyaltyConfig}
-      onLogin={c => { setActiveClientPortal(c); setShowClientLogin(false); }}
+      onLogin={c => {
+        // Bottom-left "Client Portal" funnels into the same per-project portal
+        // iframe used everywhere else, so the photographer always sees the
+        // exact thing the client sees at /client/<projectId>. We default to
+        // the first project on this CRM client; if they have none, we fall
+        // back to the most recently viewed project (portalProjId) so the
+        // page always renders something.
+        const firstProj = (c?.projectIds && c.projectIds[0])
+          || (appProjects?.find(p => p.client === c?.name)?.id)
+          || portalProjId;
+        setShowClientLogin(false);
+        setActiveClientPortal(null);
+        if (firstProj) { setPortalProjId(firstProj); setPage("portal"); }
+      }}
       onClose={() => setShowClientLogin(false)}
     />;
   }
-  if (activeClientPortal) {
-    return <ClientDashboard
-      client={activeClientPortal}
-      loyalty={CLIENT_LOYALTY_SEED[activeClientPortal.id]}
-      brandKit={brandKit}
-      loyaltyConfig={loyaltyConfig}
-      clientDmMessages={clientDmMessages}
-      setClientDmMessages={setClientDmMessages}
-      galleryDelivery={galleryDelivery}
-      clientFavorites={clientFavorites}
-      setClientFavorites={setClientFavorites}
-      onViewProject={pid => { setActiveClientPortal(null); setPortalProjId(pid); setPage("portal"); }}
-      onLogout={() => setActiveClientPortal(null)}
-    />;
-  }
+  // (Legacy ClientDashboard view replaced — every "Client Portal" button now
+  // funnels through the iframe of /client/<projectId> for cohesion.)
   {/* Loyalty editor overlay — rendered inside owner view */}
 
   // ── Team Member Portal rendering ──
