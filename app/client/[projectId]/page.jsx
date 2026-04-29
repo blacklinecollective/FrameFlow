@@ -117,7 +117,7 @@ function PhotoTile({ photo, onClick, isFav, onFav, onDownload }) {
 }
 
 // ── Video Review Tab ──────────────────────────────────────────────────────────
-function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: initComments, brandColor, dark, fg, sub, brd, bg, studioName }) {
+function VideoReviewTab({ projectId, ownerUserId, project, videoDeliverables, videoComments: initComments, brandColor, dark, fg, sub, brd, bg, studioName }) {
   const [supabase,    setSupabase]    = useState(null);
   const [comments,    setComments]    = useState(initComments || {});
   const [selDelId,    setSelDelId]    = useState(null);
@@ -171,9 +171,10 @@ function VideoReviewTab({ projectId, project, videoDeliverables, videoComments: 
     setSaving(true);
     try {
       await supabase.rpc("add_client_video_comment", {
-        p_project_id: Number(projectId),
-        p_version_id: selVerId,
-        p_comment:    comment,
+        p_project_id:    Number(projectId),
+        p_version_id:    selVerId,
+        p_comment:       comment,
+        p_owner_user_id: ownerUserId || null,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -497,6 +498,17 @@ export default function ClientPortalPage({ params }) {
   const [pickerNameDraft,    setPickerNameDraft]    = useState("");
   const sbRef = useRef(null);
   const msgEndRef = useRef(null);
+  // Photographer's user_id from the link's ?owner= param. Passed to every
+  // public-portal RPC as p_owner_user_id so the right account is targeted
+  // even if two users happen to share a project ID. Falls back to the
+  // server's heuristic when missing (older links keep working).
+  const ownerUserIdRef = useRef(null);
+  if (typeof window !== "undefined" && ownerUserIdRef.current === null) {
+    try {
+      const p = new URLSearchParams(window.location.search || "");
+      ownerUserIdRef.current = p.get("owner") || undefined;
+    } catch(_) { ownerUserIdRef.current = undefined; }
+  }
 
   useEffect(() => {
     if (!projectId || isNaN(projectId)) { setNotFound(true); setLoading(false); return; }
@@ -506,7 +518,7 @@ export default function ClientPortalPage({ params }) {
         const { createClient } = await import("@supabase/supabase-js");
         const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
         sbRef.current = sb;
-        const { data: result, error } = await sb.rpc("get_client_portal_data", { p_project_id: projectId });
+        const { data: result, error } = await sb.rpc("get_client_portal_data", { p_project_id: projectId, p_owner_user_id: ownerUserIdRef.current || null });
         if (cancelled) return;
         if (error) { setFetchErr(error.message || "Failed to load."); setLoading(false); return; }
         if (!result) { setNotFound(true); setLoading(false); return; }
@@ -574,7 +586,7 @@ export default function ClientPortalPage({ params }) {
       try {
         const sb = sbRef.current;
         if (!sb) return;
-        const { data: result } = await sb.rpc("get_client_portal_data", { p_project_id: Number(projectId) });
+        const { data: result } = await sb.rpc("get_client_portal_data", { p_project_id: Number(projectId), p_owner_user_id: ownerUserIdRef.current || null });
         if (result?.threads && typeof result.threads === "object") {
           setThreads(result.threads);
         } else if (result && Array.isArray(result.messages)) {
@@ -721,10 +733,11 @@ export default function ClientPortalPage({ params }) {
       const sb = sbRef.current;
       if (sb) {
         await sb.rpc("send_client_message", {
-          p_project_id:   Number(projectId),
-          p_message:      msg,
-          p_thread_id:    tid,
-          p_contact_name: "Project Chat",
+          p_project_id:    Number(projectId),
+          p_message:       msg,
+          p_thread_id:     tid,
+          p_contact_name:  "Project Chat",
+          p_owner_user_id: ownerUserIdRef.current || null,
         });
         setMsgSent(true);
         setTimeout(() => setMsgSent(false), 3000);
@@ -817,6 +830,7 @@ export default function ClientPortalPage({ params }) {
       {tab === "video" && (
         <VideoReviewTab
           projectId={projectId}
+          ownerUserId={ownerUserIdRef.current}
           project={project}
           videoDeliverables={videoDeliverables}
           videoComments={videoComments}
@@ -968,7 +982,7 @@ export default function ClientPortalPage({ params }) {
                     const sb = sbRef.current;
                     if (sb) {
                       const paidAt = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
-                      await sb.rpc("pay_client_invoice", { p_project_id: Number(projectId), p_invoice_id: payModal.id, p_paid_at: paidAt });
+                      await sb.rpc("pay_client_invoice", { p_project_id: Number(projectId), p_invoice_id: payModal.id, p_paid_at: paidAt, p_owner_user_id: ownerUserIdRef.current || null });
                     }
                     setPayDone(prev => ({ ...prev, [payModal.id]: true }));
                     setPayModal(null);

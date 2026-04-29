@@ -5000,7 +5000,9 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
   const saveNewProject = () => {
     if (!newProjForm.name.trim() || !newProjForm.client.trim()) return;
-    const newId = Date.now();
+    // Higher-entropy project ID: ms-since-epoch * 1000 + 3 random digits.
+    // Drops collision probability to ~1e-6/ms — effectively zero across users.
+    const newId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
     const colorIdx = Math.floor(Math.random() * COVER_COLORS.length);
     const newProject = {
       id: newId,
@@ -5854,7 +5856,11 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                 {contacts.filter(c=>c.type==="client").map(c => {
                   const slug = (c.name||"").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
-                  const portalUrl = (typeof window !== "undefined" ? window.location.origin : "") + `/client/${proj.id}?as=${slug}`;
+                  // Include owner=<userId> so the public portal RPCs can pin
+                  // the right photographer's account even if two users happen
+                  // to share a project ID.
+                  const ownerParam = supabaseSession?.user?.id ? `&owner=${supabaseSession.user.id}` : "";
+                  const portalUrl = (typeof window !== "undefined" ? window.location.origin : "") + `/client/${proj.id}?as=${slug}${ownerParam}`;
                   return (
                     <div key={c.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"13px 16px", background:C.cream, borderRadius:12, border:`1px solid ${C.border}` }}>
                       <div style={{ width:40, height:40, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, flexShrink:0 }}>{c.avatar}</div>
@@ -25775,7 +25781,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
 // sees EXACTLY what the client sees at the shared link. Before mounting we flush
 // any pending in-memory writes via saveNow() so the iframe loads the freshest
 // data from app_state.
-function ClientPortalPreview({ projId, onBack, saveNow }) {
+function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId }) {
   const [iframeKey, setIframeKey] = useState(0);
   const [ready,     setReady]     = useState(false);
   // Flush pending saves before the iframe loads the data via RPC.
@@ -25787,7 +25793,10 @@ function ClientPortalPreview({ projId, onBack, saveNow }) {
     })();
     return () => { cancelled = true; };
   }, [projId, iframeKey, saveNow]);
-  const src = `/client/${projId}`;
+  // Pin the iframe to this photographer's account by passing owner so the
+  // portal RPCs don't depend on a project-id heuristic.
+  const ownerQ = ownerUserId ? `?owner=${ownerUserId}` : "";
+  const src = `/client/${projId}${ownerQ}`;
   const fullUrl = (typeof window !== "undefined" ? window.location.origin : "") + src;
   return (
     <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", background:"#0e1a15" }}>
@@ -26110,7 +26119,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow}/>,
+    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
