@@ -1135,7 +1135,21 @@ export default function ClientPortalPage({ params }) {
               <div style={{ flex:1, minWidth:240 }}>
                 <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:2, margin:"0 0 6px", fontWeight:600 }}>{project?.type || "Your project"}</p>
                 <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 6px", lineHeight:1.1 }}>
-                  {customGreeting || `${greeting} ${firstName}.`}
+                  {(() => {
+                    // Headline rules:
+                    // - No custom greeting → "Good morning, Mike." (auto)
+                    // - Custom greeting only → "Welcome Back" (verbatim)
+                    // - Custom greeting + custom name → "Welcome Back, Mike"
+                    //   (skipped if the greeting already contains the name)
+                    if (!customGreeting) return `${greeting} ${firstName}.`;
+                    if (!customClientName) return customGreeting;
+                    const greetingHasName = customGreeting.toLowerCase().includes(customClientName.toLowerCase());
+                    if (greetingHasName) return customGreeting;
+                    // Trim any trailing punctuation off the greeting so we
+                    // don't end up with "Hi!, Mike."
+                    const cleaned = customGreeting.replace(/[.,!?\s]+$/u, "");
+                    return `${cleaned}, ${customClientName}`;
+                  })()}
                 </h1>
                 <p style={{ fontSize:14, color:sub, margin:"0 0 16px", lineHeight:1.6, maxWidth:520, whiteSpace:"pre-wrap" }}>
                   {customWelcome || (
