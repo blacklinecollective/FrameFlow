@@ -5471,7 +5471,6 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
       ]},
       { id:"client",    label:"Client",    icon:"users",  sub:[
         { id:"contacts", label:"Contacts",  icon:"users"  },
-        { id:"preview",  label:"Preview",   icon:"eye"    },
       ]},
       // Messages was previously nested under Client → lifted to a top-level
       // tab so it sits one click away from anywhere in the project.
@@ -5820,7 +5819,10 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
           <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
             <Btn variant="secondary" icon="edit" onClick={() => openEditModal(proj)}>Edit</Btn>
             <Btn variant="secondary" icon="eye" onClick={() => goPortal && goPortal(proj.id)}>Client Portal</Btn>
-            <Btn icon="plus">Add Item</Btn>
+            {/* Preview = the same client-portal preview, surfaced as a
+                second-tier action since the +Add Item button this
+                replaced wasn't wired to anything. */}
+            <Btn icon="eye" onClick={() => goPortal && goPortal(proj.id)}>Preview</Btn>
           </div>
         </div>
 

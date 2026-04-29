@@ -1082,7 +1082,11 @@ export default function ClientPortalPage({ params }) {
         const customGreeting    = (delivery.homeGreeting || "").trim();
         const customWelcome     = (delivery.homeWelcomeMessage || "").trim();
         const customClientName  = (delivery.homeClientName || "").trim();
-        const firstName  = (customClientName || identity?.name || project?.client || "there").split(" ")[0];
+        // If the photographer typed an explicit client name (e.g. "Mike & Kelly"),
+        // show it VERBATIM. Only the auto-derived names (from identity / project)
+        // get split to a first word.
+        const firstName  = customClientName
+          || (identity?.name || project?.client || "there").split(" ")[0];
         const photoCount = photos.length;
         const videoCount = videoDeliverables.length;
         const checklistTotal = (project?.checklist || []).length;
