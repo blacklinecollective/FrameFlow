@@ -4678,10 +4678,56 @@ const blankForm = () => ({
 const fmtDate = d => { if(!d) return "—"; const p=d.split("-"); return new Date(p[0],p[1]-1,p[2]).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}); };
 const fmtMoney = n => isNaN(+n)||n===""?"—":"$" + (+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 
-const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
+const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmClients, supabaseSession }) => {
   const [view,    setView]    = useState("list");   // list | template | form | preview
   const [tmplId,  setTmplId]  = useState(null);
-  const [form,    setForm]    = useState(blankForm);
+  // ── Pre-fill helper: stitch together studio info (brandKit + auth) and
+  // the matched CRM client's contact info so the photographer doesn't
+  // have to retype names / addresses / phone numbers / emails on every
+  // new invoice. All fields stay editable after pre-fill.
+  const buildPrefill = () => {
+    const base = blankForm();
+    // ── Studio side (the "Bill from" / sender) ─────────────────────────
+    base.bizName  = brandKit?.studioName || (supabaseSession?.user?.user_metadata?.full_name) || "";
+    base.yourName = (supabaseSession?.user?.user_metadata?.full_name) || brandKit?.studioName || "";
+    base.bizEmail = supabaseSession?.user?.email || "";
+    if (brandKit?.studioPhone)   base.bizPhone = brandKit.studioPhone;
+    if (brandKit?.studioWebsite) base.bizWeb   = brandKit.studioWebsite;
+    if (brandKit?.studioAddress) {
+      const a = brandKit.studioAddress;
+      base.bizAddr  = a.line1 || a.street || "";
+      base.bizCity  = a.city || "";
+      base.bizState = a.state || base.bizState;
+      base.bizZip   = a.zip || "";
+    }
+    // ── Client side (the "Bill to") — match the project's primary client
+    //   (proj.client) against the CRM list, and fall back to whichever
+    //   project contact is marked as a client.
+    const clientNameFromProj = proj?.client || "";
+    const matchedCrm = (crmClients || []).find(c =>
+      c?.name && clientNameFromProj && c.name.toLowerCase() === clientNameFromProj.toLowerCase()
+    );
+    const projContactClient = (proj?.contacts || []).find(c => c?.type === "client");
+    const src = matchedCrm || projContactClient || null;
+    base.clientName = clientNameFromProj || src?.name || "";
+    if (src?.email)    base.clientEmail = src.email;
+    if (src?.phone)    base.clientPhone = src.phone;
+    if (src?.location) {
+      // Free-form "City, State" location string from CRM record.
+      base.clientCity = src.location;
+    }
+    // Project contact profile (we added structured address there earlier)
+    if (projContactClient?.address) {
+      const a = projContactClient.address;
+      base.clientAddr  = a.line1 || base.clientAddr;
+      base.clientCity  = a.city  || base.clientCity;
+      base.clientState = a.state || base.clientState;
+      base.clientZip   = a.zip   || base.clientZip;
+    }
+    if (proj?.name) base.projectDesc = proj.name;
+    return base;
+  };
+  const [form,    setForm]    = useState(() => buildPrefill());
   const [items,   setItems]   = useState([{desc:"",qty:1,rate:""}]);
   const [selInv,  setSelInv]  = useState(null);
   const [printed, setPrinted] = useState(false);
@@ -4707,8 +4753,30 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
     const t = INV_TMPLS.find(x=>x.id===id);
     setTmplId(id);
     setItems(t.items.map(x=>({...x})));
-    setForm(blankForm());
+    // Use the prefilled form (studio + client info) instead of a blank one
+    // so the photographer just types line-item details and dates.
+    setForm(buildPrefill());
     setView("form");
+  };
+
+  // When the photographer changes the Client Name field, re-look it up in
+  // CRM and pull in the freshest email / phone / address — but never blow
+  // away anything they've already typed manually.
+  const onClientNameChange = (newName) => {
+    const trimmed = (newName || "").trim();
+    setForm(f => {
+      const next = { ...f, clientName: newName };
+      if (!trimmed) return next;
+      const match = (crmClients || []).find(c =>
+        c?.name && c.name.toLowerCase() === trimmed.toLowerCase()
+      );
+      if (!match) return next;
+      // Only fill blank fields — don't overwrite manual edits.
+      if (!f.clientEmail && match.email)    next.clientEmail = match.email;
+      if (!f.clientPhone && match.phone)    next.clientPhone = match.phone;
+      if (!f.clientCity  && match.location) next.clientCity  = match.location;
+      return next;
+    });
   };
 
   const resetToList = () => { setView("list"); setTmplId(null); setSelInv(null); setSaved(false); setEmailSent(false); };
@@ -4880,7 +4948,11 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
           <Card style={{ padding:22, marginBottom:14 }}>
             {sec("Client / Bill To")}
             <div style={row}>
-              <div style={col("50%")}><label style={lbl}>Client Full Name *</label><input style={inp()} value={form.clientName} onChange={e=>F("clientName",e.target.value)} placeholder="Sarah & James Chen"/></div>
+              <div style={col("50%")}><label style={lbl}>Client Full Name *</label><input style={inp()} list="ff-crm-clients" value={form.clientName} onChange={e=>onClientNameChange(e.target.value)} placeholder="Sarah & James Chen"/>
+                <datalist id="ff-crm-clients">
+                  {(crmClients || []).map(c => <option key={c.id} value={c.name}/>)}
+                </datalist>
+              </div>
               <div style={col("50%")}><label style={lbl}>Company / Event Name</label><input style={inp()} value={form.clientCompany} onChange={e=>F("clientCompany",e.target.value)} placeholder="Chen Wedding — May 12, 2026"/></div>
             </div>
             <div style={row}>
@@ -5175,7 +5247,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
+const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses, crmClients }) => {
   // Derive the photographer's real display name from their account
   const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
@@ -6686,7 +6758,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
         })()}
 
         {/* ── INVOICES ── */}
-        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} setAppInvoices={setAppInvoices}/>}
+        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} setAppInvoices={setAppInvoices} brandKit={brandKit} crmClients={crmClients} supabaseSession={supabaseSession}/>}
 
         {/* ── PROFITABILITY ── */}
         {tab === "profitability" && (
@@ -26897,7 +26969,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
+    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
