@@ -10,6 +10,38 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
+
+// ── Robust clipboard copy ─────────────────────────────────────
+// navigator.clipboard.writeText silently fails in unfocused tabs, sandboxed
+// iframes, browsers without secure-context, etc. Fall back to a hidden
+// textarea + execCommand("copy"), which works in every modern browser.
+async function copyToClipboard(text) {
+  if (typeof window === "undefined") return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch(_) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "0";
+    document.body.appendChild(ta);
+    const sel = document.getSelection();
+    const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch(_) {}
+    document.body.removeChild(ta);
+    if (savedRange && sel) { sel.removeAllRanges(); sel.addRange(savedRange); }
+    return !!ok;
+  } catch(_) { return false; }
+}
 const _saveState = async (userId, patch) => {
   if (!userId) return;
   let cleanPatch = patch;
@@ -5040,6 +5072,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [activeChat,    setActiveChat]    = useState(null); // kept for compat
   const [projMessages,  setProjMessages]  = useState({}); // { [projId]: { threadId: { id, contactName, messages: [] } } } — loaded from DB
   const [showAddContact, setShowAddContact] = useState(false);
+  const [justCopiedId,   setJustCopiedId]   = useState(null); // contact whose link was just copied (for inline button feedback)
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
   const [newContact, setNewContact] = useState(blankContact);
@@ -5867,7 +5900,22 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                       <div style={{ flex:1, minWidth:0 }}>
                         <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{c.name}</p>
                         <p style={{ fontSize:12, color:C.accent, margin:"2px 0 0", fontWeight:500 }}>{c.role}</p>
-                        <p style={{ fontSize:10, color:C.muted, margin:"3px 0 0", fontFamily:"ui-monospace, monospace", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{portalUrl}</p>
+                        {/* The URL itself is also a one-click copy target as a fallback */}
+                        <p
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            const ok = await copyToClipboard(portalUrl);
+                            if (ok) {
+                              setJustCopiedId(c.id);
+                              setTimeout(() => setJustCopiedId(prev => prev === c.id ? null : prev), 1800);
+                            } else if (typeof pushNotif === "function") {
+                              pushNotif("Couldn't copy automatically", "Long-press the URL to select & copy.", "item");
+                            }
+                          }}
+                          title="Click to copy"
+                          style={{ fontSize:10, color:C.muted, margin:"3px 0 0", fontFamily:"ui-monospace, monospace", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", cursor:"pointer", userSelect:"all" }}>
+                          {portalUrl}
+                        </p>
                       </div>
                       <div style={{ fontSize:12, color:C.muted, textAlign:"right" }}>
                         <p style={{ margin:0 }}>{c.email}</p>
@@ -5876,12 +5924,18 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"flex-end" }}>
                         <button
                           onClick={async () => {
-                            try { await navigator.clipboard.writeText(portalUrl); pushNotif(`✓ ${c.name}'s link copied`, `Send it to them — their messages will be tagged "${c.name}" automatically.`, "item"); }
-                            catch(_) { pushNotif(`Could not copy link`, `You can select & copy it from the field above.`, "item"); }
+                            const ok = await copyToClipboard(portalUrl);
+                            if (ok) {
+                              setJustCopiedId(c.id);
+                              setTimeout(() => setJustCopiedId(prev => prev === c.id ? null : prev), 1800);
+                              if (typeof pushNotif === "function") pushNotif(`✓ ${c.name}'s link copied`, `Their messages will be tagged "${c.name}" automatically.`, "item");
+                            } else if (typeof pushNotif === "function") {
+                              pushNotif("Couldn't copy link", "Click the URL above to copy it manually.", "item");
+                            }
                           }}
-                          style={{ padding:"7px 12px", background:"#007AFF", border:"none", borderRadius:8, fontSize:12, cursor:"pointer", color:"#fff", fontWeight:600 }}
+                          style={{ padding:"7px 12px", background: justCopiedId === c.id ? "#22a06b" : "#007AFF", border:"none", borderRadius:8, fontSize:12, cursor:"pointer", color:"#fff", fontWeight:600, transition:"background .15s", minWidth:80 }}
                           title={`Copy ${c.name}'s personal portal + chat link`}>
-                          Copy link
+                          {justCopiedId === c.id ? "✓ Copied!" : "Copy link"}
                         </button>
                         <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
                         <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
@@ -25784,6 +25838,7 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
 function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId }) {
   const [iframeKey, setIframeKey] = useState(0);
   const [ready,     setReady]     = useState(false);
+  const [justCopied, setJustCopied] = useState(false);
   // Flush pending saves before the iframe loads the data via RPC.
   useEffect(() => {
     let cancelled = false;
@@ -25810,11 +25865,23 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId }) {
           <span style={{ fontSize:10, color:"rgba(245,242,238,.55)" }}>This is exactly what your client sees at the shared link</span>
         </div>
         <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
-          <code style={{ fontSize:11, color:"rgba(245,242,238,.55)", padding:"4px 10px", background:"rgba(255,255,255,.06)", borderRadius:6, fontFamily:"ui-monospace, monospace" }}>{src}</code>
-          <button onClick={() => { try { navigator.clipboard.writeText(fullUrl); } catch(_) {} }}
+          <code
+            onClick={async () => {
+              const ok = await copyToClipboard(fullUrl);
+              if (ok) { setJustCopied(true); setTimeout(() => setJustCopied(false), 1800); }
+            }}
+            title="Click to copy"
+            style={{ fontSize:11, color:"rgba(245,242,238,.55)", padding:"4px 10px", background:"rgba(255,255,255,.06)", borderRadius:6, fontFamily:"ui-monospace, monospace", cursor:"pointer", userSelect:"all" }}>{src}</code>
+          <button
+            onClick={async () => {
+              const ok = await copyToClipboard(fullUrl);
+              if (ok) { setJustCopied(true); setTimeout(() => setJustCopied(false), 1800); }
+            }}
             title="Copy shareable link"
-            style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
-              padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>Copy link</button>
+            style={{ background: justCopied ? "rgba(52,199,89,.25)" : "none", border:`1px solid ${justCopied ? "rgba(52,199,89,.6)" : "rgba(255,255,255,.2)"}`, color:"#f5f2ee",
+              padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, transition:"all .15s", minWidth:78 }}>
+            {justCopied ? "✓ Copied!" : "Copy link"}
+          </button>
           <button onClick={() => { setReady(false); setIframeKey(k => k + 1); }}
             title="Refresh preview"
             style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
