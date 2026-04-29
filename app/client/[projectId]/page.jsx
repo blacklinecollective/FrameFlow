@@ -768,20 +768,50 @@ export default function ClientPortalPage({ params }) {
               </div>
               <p style={{ fontSize:13, color:sub, margin:"0 0 20px" }}>{done} of {checklist.length} steps complete</p>
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                {checklist.map((item, idx) => (
-                  <div key={idx} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px",
-                    background:item.checked?(dark?"rgba(74,122,87,.15)":"#edf3ef"):(dark?"rgba(255,255,255,.04)":"#fff"),
-                    border:`1px solid ${item.checked?(dark?"rgba(74,122,87,.3)":C.green):brd}`, borderRadius:12 }}>
-                    <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${item.checked?C.green:brd}`, background:item.checked?C.green:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                      {item.checked && <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                {checklist.map((item, idx) => {
+                  // ── Format the deadline + decide its color/severity ──────
+                  const fmtDue = (iso) => {
+                    if (!iso) return "";
+                    const d = new Date(iso + "T00:00:00");
+                    if (isNaN(d.getTime())) return iso;
+                    const sameYear = d.getFullYear() === new Date().getFullYear();
+                    return d.toLocaleDateString("en-US", sameYear
+                      ? { month:"short", day:"numeric" }
+                      : { month:"short", day:"numeric", year:"numeric" });
+                  };
+                  let dueLabel = null, dueColor = sub;
+                  if (item.due) {
+                    const d = new Date(item.due + "T00:00:00");
+                    if (!isNaN(d.getTime())) {
+                      const today = new Date(); today.setHours(0,0,0,0);
+                      const days = Math.round((d - today) / 86400000);
+                      if (item.checked)        { dueLabel = `Due ${fmtDue(item.due)}`; dueColor = sub; }
+                      else if (days < 0)        { dueLabel = `${-days} day${-days===1?"":"s"} overdue`; dueColor = "#c25450"; }
+                      else if (days === 0)      { dueLabel = `Due today`;             dueColor = "#c25450"; }
+                      else if (days <= 3)       { dueLabel = `Due in ${days} day${days===1?"":"s"}`; dueColor = "#b07a30"; }
+                      else                      { dueLabel = `Due ${fmtDue(item.due)}`; dueColor = sub; }
+                    }
+                  }
+                  return (
+                    <div key={idx} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px",
+                      background:item.checked?(dark?"rgba(74,122,87,.15)":"#edf3ef"):(dark?"rgba(255,255,255,.04)":"#fff"),
+                      border:`1px solid ${item.checked?(dark?"rgba(74,122,87,.3)":C.green):brd}`, borderRadius:12 }}>
+                      <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${item.checked?C.green:brd}`, background:item.checked?C.green:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        {item.checked && <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:item.checked?C.green:fg, margin:0 }}>{item.text}</p>
+                        {dueLabel && (
+                          <p style={{ fontSize:11, color:dueColor, fontWeight:600, margin:"2px 0 0", display:"flex", alignItems:"center", gap:5 }}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={dueColor} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            {dueLabel}
+                          </p>
+                        )}
+                      </div>
+                      {item.checked && <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Done</span>}
                     </div>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:600, color:item.checked?C.green:fg, margin:0 }}>{item.text}</p>
-                      {item.due && <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>Due {item.due}</p>}
-                    </div>
-                    {item.checked && <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Done</span>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}

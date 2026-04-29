@@ -5046,6 +5046,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   // They are received as props so they survive logout/login and tab navigation.
   const [ckInput,   setCkInput]   = useState("");
   const [ckCat,     setCkCat]     = useState("prep");
+  const [ckDue,     setCkDue]     = useState("");
   const [tlDate,    setTlDate]    = useState("");
   const [tlHours,   setTlHours]   = useState("");
   const [tlDesc,    setTlDesc]    = useState("");
@@ -6357,11 +6358,38 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           const totalHrs   = timeLogs.reduce((s,l)=>s+l.hours,0);
           const CAT_COLORS = { admin:"#7a8c9e", prep:"#b8976a", shoot:"#5c7a68", editing:"#9b7fe8", review:"#e87d3e", deliver:"#4a7c59" };
           const CAT_LABELS = { admin:"Admin", prep:"Prep", shoot:"Shoot", editing:"Editing", review:"Review", deliver:"Delivery" };
+          // ── Due-date helpers ──────────────────────────────────────────
+          // Format ISO date "YYYY-MM-DD" → "Apr 29" (or "Apr 29, 2027" if not current year).
+          const formatDue = (iso) => {
+            if (!iso) return "";
+            const d = new Date(iso + "T00:00:00");
+            if (isNaN(d.getTime())) return iso;
+            const sameYear = d.getFullYear() === new Date().getFullYear();
+            return d.toLocaleDateString("en-US", sameYear
+              ? { month:"short", day:"numeric" }
+              : { month:"short", day:"numeric", year:"numeric" });
+          };
+          // Returns { label, color } based on how the date relates to today.
+          // - overdue (past, item not done): red
+          // - within 3 days (item not done): amber
+          // - future / done: muted
+          const dueStatus = (iso, checked) => {
+            if (!iso) return null;
+            const d = new Date(iso + "T00:00:00");
+            if (isNaN(d.getTime())) return null;
+            const today = new Date(); today.setHours(0,0,0,0);
+            const days = Math.round((d - today) / 86400000);
+            if (checked) return { label:`Due ${formatDue(iso)}`, color:"#9aa9b3" };
+            if (days < 0)  return { label:`${-days}d overdue`, color:"#c25450" };
+            if (days === 0) return { label:`Due today`,         color:"#c25450" };
+            if (days <= 3)  return { label:`Due in ${days}d`,    color:"#b07a30" };
+            return            { label:`Due ${formatDue(iso)}`,    color:"#7a8c9e" };
+          };
           const addChecklistItem = () => {
             if (!ckInput.trim()) return;
-            const newItem = { id: Date.now(), text:ckInput.trim(), checked:false, cat:ckCat, due:"" };
+            const newItem = { id: Date.now(), text:ckInput.trim(), checked:false, cat:ckCat, due:ckDue || "" };
             updateChecklist(proj.id, prev => [...prev, newItem]);
-            setCkInput("");
+            setCkInput(""); setCkDue("");
           };
           const setChecklistItemDate = (id, due) => {
             updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, due} : c));
@@ -6465,31 +6493,44 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
                           <button onClick={() => removeCheck(item.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:15, lineHeight:1, padding:"0 2px", opacity:.5 }}>×</button>
                         </div>
                         {/* Deadline row */}
-                        <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px 8px 44px", borderTop:`1px solid ${item.checked?"#c3d9c3":C.border}` }}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                          <input
-                            type="date"
-                            value={item.due || ""}
-                            onChange={e => setChecklistItemDate(item.id, e.target.value)}
-                            style={{ fontSize:11, color:item.due?C.muted:"#bbb", border:"none", outline:"none", background:"transparent", cursor:"pointer", padding:0 }}
-                          />
-                          {item.due && (
-                            <button onClick={() => setChecklistItemDate(item.id, "")} style={{ fontSize:10, color:C.muted, background:"none", border:"none", cursor:"pointer", padding:0, opacity:.5 }}>✕</button>
-                          )}
-                        </div>
+                        {(() => {
+                          const status = dueStatus(item.due, item.checked);
+                          const stroke = status ? status.color : C.muted;
+                          return (
+                            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px 8px 44px", borderTop:`1px solid ${item.checked?"#c3d9c3":C.border}` }}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                              <input
+                                type="date"
+                                value={item.due || ""}
+                                onChange={e => setChecklistItemDate(item.id, e.target.value)}
+                                style={{ fontSize:11, color:item.due?"transparent":"#bbb", width:item.due?14:90, border:"none", outline:"none", background:"transparent", cursor:"pointer", padding:0 }}
+                                title={item.due ? `Deadline: ${formatDue(item.due)}` : "Set a deadline"}
+                              />
+                              {status && (
+                                <span style={{ fontSize:11, fontWeight:600, color:status.color }}>{status.label}</span>
+                              )}
+                              {item.due && (
+                                <button onClick={() => setChecklistItemDate(item.id, "")} style={{ fontSize:10, color:C.muted, background:"none", border:"none", cursor:"pointer", padding:0, opacity:.5, marginLeft:"auto" }}>clear</button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
                   {/* Add item */}
-                  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:7, alignItems:"center", flexWrap:"wrap" }}>
                     <input value={ckInput} onChange={e=>setCkInput(e.target.value)}
                       onKeyDown={e=>e.key==="Enter"&&addChecklistItem()}
                       placeholder="Add a milestone or task…"
-                      style={{ flex:1, fontSize:12, padding:"8px 11px", border:`1px solid ${C.border}`, borderRadius:8, outline:"none" }}/>
+                      style={{ flex:"1 1 180px", minWidth:0, fontSize:12, padding:"8px 11px", border:`1px solid ${C.border}`, borderRadius:8, outline:"none" }}/>
                     <select value={ckCat} onChange={e=>setCkCat(e.target.value)}
                       style={{ fontSize:11, padding:"8px 7px", border:`1px solid ${C.border}`, borderRadius:8, background:"#fff", color:C.ink, outline:"none" }}>
                       {Object.entries(CAT_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
                     </select>
+                    <input type="date" value={ckDue} onChange={e=>setCkDue(e.target.value)}
+                      title="Optional deadline (visible to client)"
+                      style={{ fontSize:11, padding:"7px 8px", border:`1px solid ${C.border}`, borderRadius:8, background:"#fff", color:ckDue?C.ink:"#bbb", outline:"none", cursor:"pointer" }}/>
                     <button onClick={addChecklistItem}
                       style={{ width:32, height:32, borderRadius:8, border:"none", background:C.ink, color:"#fff", cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>+</button>
                   </div>
