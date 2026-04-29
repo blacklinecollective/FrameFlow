@@ -5175,7 +5175,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
+const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
   // Derive the photographer's real display name from their account
   const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
@@ -5351,14 +5351,34 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     setTab("overview");
   };
 
-  // Consume deep-link navigation from Dashboard
+  // ── Loop-safe two-way sync between sel/tab and the parent's projDeepLink ──
+  // Goal: a browser refresh restores the same project + sub-tab. We do that
+  // by treating projDeepLink as the persistent canonical view. A signature
+  // string ("id:tab") tracks the last value either side wrote, so the
+  // useEffects don't ping-pong each other.
+  const _navSig = useRef("");
+  const _sigOf = (id, t) => id ? `${id}:${t || "overview"}` : "";
+
+  // Direction 1: parent → us (initial mount with restored deepLink, or
+  // external nav like goProject).
   useEffect(() => {
-    if (deepLink?.id) {
+    const incoming = deepLink ? _sigOf(deepLink.id, deepLink.tab) : "";
+    if (incoming && incoming !== _navSig.current) {
       setSel(deepLink.id);
       setTab(deepLink.tab || "overview");
-      if (clearDeepLink) clearDeepLink();
+      _navSig.current = incoming;
     }
   }, [deepLink]);
+
+  // Direction 2: us → parent (user changes project or sub-tab inside Projects).
+  useEffect(() => {
+    if (!sel) return;
+    const ours = _sigOf(sel, tab);
+    if (ours !== _navSig.current) {
+      _navSig.current = ours;
+      if (setProjDeepLink) setProjDeepLink({ id: sel, tab });
+    }
+  }, [sel, tab]);
 
   // ── Load + poll messages from DB (RPC-only, never auto-saved) ─────────────
   useEffect(() => {
@@ -26075,8 +26095,17 @@ export default function App() {
       setSession(session);
       setAuthChecked(true);
     });
-    // Listen for login/logout
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Listen for login/logout. On sign-out, clear the persisted nav state
+    // so the next sign-in starts on the dashboard rather than restoring the
+    // previous user's last view.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        try {
+          localStorage.removeItem("ff_page");
+          localStorage.removeItem("ff_projDeepLink");
+          localStorage.removeItem("ff_portalProjId");
+        } catch(_) {}
+      }
       setSession(session);
     });
     return () => subscription.unsubscribe();
@@ -26090,9 +26119,37 @@ export default function App() {
 }
 
 function AppShell({ supabaseSession, supabaseClient }) {
-  const [page, setPage]       = useState("dashboard");
-  const [projDeepLink, setProjDeepLink] = useState(null); // { id, tab }
-  const [portalProjId, setPortalProjId] = useState(1);
+  // ── Navigation state, persisted to localStorage so browser refresh keeps
+  // the user on the same view they left off on (rather than dropping back
+  // to the dashboard each time). Cleared on sign-out (see App component).
+  const [page, setPage]       = useState(() => {
+    if (typeof window === "undefined") return "dashboard";
+    try { return localStorage.getItem("ff_page") || "dashboard"; } catch { return "dashboard"; }
+  });
+  const [projDeepLink, setProjDeepLink] = useState(() => {
+    if (typeof window === "undefined") return null;
+    try { return JSON.parse(localStorage.getItem("ff_projDeepLink") || "null"); } catch { return null; }
+  }); // { id, tab }
+  const [portalProjId, setPortalProjId] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    try { const v = localStorage.getItem("ff_portalProjId"); return v ? Number(v) : 1; } catch { return 1; }
+  });
+  // Write-through persistence
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { localStorage.setItem("ff_page", page); } catch(_) {}
+  }, [page]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (projDeepLink) localStorage.setItem("ff_projDeepLink", JSON.stringify(projDeepLink));
+      else localStorage.removeItem("ff_projDeepLink");
+    } catch(_) {}
+  }, [projDeepLink]);
+  useEffect(() => {
+    if (typeof window === "undefined" || portalProjId == null) return;
+    try { localStorage.setItem("ff_portalProjId", String(portalProjId)); } catch(_) {}
+  }, [portalProjId]);
   const [showMore, setShowMore] = useState(false);   // mobile "More" sheet
   const [winW,  setWinW]      = useState(window.innerWidth);
   const [brandKit, setBrandKit] = useState(BRAND_KIT_DEFAULT);
@@ -26307,10 +26364,17 @@ function AppShell({ supabaseSession, supabaseClient }) {
     setPageHistory(prev => [...prev.slice(-19), currentPage]); // keep last 20
   };
 
+  // Clear the persisted project view whenever we leave the Projects page
+  // (so refreshing on the dashboard doesn't bounce them back into a project
+  // when they next click into Projects).
+  const _maybeClearDeepLink = (nextPage) => {
+    if (nextPage !== "projects" && nextPage !== "portal") setProjDeepLink(null);
+  };
   const navGo = (id) => {
     if (id !== page) pushHistory(page);
     setPage(id);
     setShowMore(false);
+    _maybeClearDeepLink(id);
   };
   const goProject = (projId, projTab) => {
     pushHistory(page);
@@ -26329,11 +26393,12 @@ function AppShell({ supabaseSession, supabaseClient }) {
     setPageHistory(h => h.slice(0, -1));
     setPage(prev);
     setShowMore(false);
+    _maybeClearDeepLink(prev);
   };
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
+    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
