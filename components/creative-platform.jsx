@@ -19349,7 +19349,7 @@ const Community = ({ commNotifs, setCommNotifs, brandKit, supabaseSession }) => 
 };
 
 // ── Account Settings ──────────────────────────────────────────
-const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit, onBeforeSignOut }) => {
+const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, setBrandKit, onBeforeSignOut }) => {
   const sessionUser = supabaseSession?.user;
   const handleSignOut = async () => {
     // Save all state immediately BEFORE revoking the auth token
@@ -19357,7 +19357,45 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit
     if (supabaseClient) await supabaseClient.auth.signOut();
   };
   const [tab,    setTab]    = useState("profile");
-  const [profile,setProfile]= useState({ name: sessionUser?.user_metadata?.full_name || "", email: sessionUser?.email || "", studio:"", phone:"", bio:"" });
+  // ── Profile form ────────────────────────────────────────────────
+  // Source of truth: brandKit on app_state (auto-saved across logout/login)
+  // + the user's auth row (for name + email). The form below mirrors that
+  // shape; saving writes both back.
+  const _addr = brandKit?.studioAddress || {};
+  const [profile, setProfile] = useState({
+    name:    sessionUser?.user_metadata?.full_name || brandKit?.studioName || "",
+    email:   sessionUser?.email || "",
+    studio:  brandKit?.studioName || "",
+    phone:   brandKit?.studioPhone || "",
+    website: brandKit?.studioWebsite || "",
+    bio:     brandKit?.studioBio || "",
+    addrLine1: _addr.line1 || "",
+    addrLine2: _addr.line2 || "",
+    city:      _addr.city  || "",
+    state:     _addr.state || "",
+    zip:       _addr.zip   || "",
+    country:   _addr.country || "",
+  });
+  // Re-hydrate when brandKit prop changes (e.g. on first DB load).
+  useEffect(() => {
+    const a = brandKit?.studioAddress || {};
+    setProfile(p => ({
+      ...p,
+      // Only overwrite a field if the user hasn't typed something new.
+      name:    p.name    || sessionUser?.user_metadata?.full_name || brandKit?.studioName || "",
+      studio:  p.studio  || brandKit?.studioName || "",
+      phone:   p.phone   || brandKit?.studioPhone || "",
+      website: p.website || brandKit?.studioWebsite || "",
+      bio:     p.bio     || brandKit?.studioBio || "",
+      addrLine1: p.addrLine1 || a.line1 || "",
+      addrLine2: p.addrLine2 || a.line2 || "",
+      city:      p.city      || a.city  || "",
+      state:     p.state     || a.state || "",
+      zip:       p.zip       || a.zip   || "",
+      country:   p.country   || a.country || "",
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandKit?.studioName, brandKit?.studioPhone, brandKit?.studioWebsite, brandKit?.studioBio, brandKit?.studioAddress?.line1, brandKit?.studioAddress?.city, brandKit?.studioAddress?.state, brandKit?.studioAddress?.zip]);
   const [profilePhoto, setProfilePhoto] = useState(null);
   const profilePhotoRef = useRef(null);
   const handleProfilePhoto = (e) => {
@@ -19439,7 +19477,32 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit
     setNotifPrefs(prev => ({ ...prev, items: { ...prev.items, [key]: { ...prev.items[key], [channel]: val } } }));
   const saveNotifs = () => { setNotifSaved(true); setTimeout(() => setNotifSaved(false), 2500); };
 
-  const save   = () => { setSaved(true);  setTimeout(() => setSaved(false),  2200); };
+  const save = async () => {
+    // Persist studio + address fields onto brandKit (auto-saved by AppShell).
+    if (setBrandKit) {
+      setBrandKit(prev => ({
+        ...(prev || {}),
+        studioName:    profile.studio.trim(),
+        studioPhone:   profile.phone.trim(),
+        studioWebsite: profile.website.trim(),
+        studioBio:     profile.bio,
+        studioAddress: {
+          line1:   profile.addrLine1.trim(),
+          line2:   profile.addrLine2.trim(),
+          city:    profile.city.trim(),
+          state:   profile.state.trim(),
+          zip:     profile.zip.trim(),
+          country: profile.country.trim(),
+        },
+      }));
+    }
+    // Update auth full_name so messaging / invoices reflect the new name.
+    if (supabaseClient && profile.name && profile.name !== (sessionUser?.user_metadata?.full_name || "")) {
+      try { await supabaseClient.auth.updateUser({ data: { full_name: profile.name.trim() } }); } catch(_) {}
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2200);
+  };
   const savePw = () => {
     if (!pwForm.next || pwForm.next !== pwForm.confirm) return;
     setPwSaved(true); setPwForm({ current:"", next:"", confirm:"" });
@@ -19510,18 +19573,76 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, setBrandKit
                   <p style={{ fontSize:11, color:C.muted, marginTop:6 }}>JPG, PNG, WebP · max 5MB</p>
                 </div>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-                {[["Full Name","name","text"],["Email Address","email","email"],["Studio Name","studio","text"],["Phone","phone","tel"]].map(([lbl,key,type]) => (
-                  <div key={key}>
-                    <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>{lbl}</label>
-                    <input type={type} value={profile[key]} onChange={e => setProfile(p => ({...p, [key]:e.target.value}))}
-                      style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+              {/* Personal + studio basics */}
+              <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 10px" }}>Personal & studio</p>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:18 }}>
+                {[
+                  ["Full Name",     "name",    "text",  false],
+                  ["Email Address", "email",   "email", true],  // managed by Supabase auth — read-only here
+                  ["Studio Name",   "studio",  "text",  false],
+                  ["Phone",         "phone",   "tel",   false],
+                  ["Website",       "website", "url",   false],
+                ].map(([lbl,key,type,readOnly]) => (
+                  <div key={key} style={key==="website"?{ gridColumn:"1 / -1" }:undefined}>
+                    <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>
+                      {lbl}{readOnly && <span style={{ marginLeft:6, fontSize:10, color:C.muted, fontWeight:400 }}>(managed by your sign-in)</span>}
+                    </label>
+                    <input type={type} value={profile[key] || ""}
+                      readOnly={readOnly}
+                      onChange={e => !readOnly && setProfile(p => ({...p, [key]:e.target.value}))}
+                      placeholder={key==="website"?"https://yourstudio.com":undefined}
+                      style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background: readOnly ? "#f5f4f1" : C.cream, boxSizing:"border-box", cursor: readOnly ? "not-allowed" : "text" }}/>
                   </div>
                 ))}
               </div>
+
+              {/* Studio address (used on invoices) */}
+              <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 10px" }}>Studio address</p>
+              <p style={{ fontSize:11, color:C.muted, margin:"-4px 0 12px", lineHeight:1.5 }}>This appears in the &ldquo;Bill from&rdquo; section on every invoice you send.</p>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:12, marginBottom:10 }}>
+                <div>
+                  <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>Address line 1</label>
+                  <input value={profile.addrLine1} onChange={e => setProfile(p => ({...p, addrLine1: e.target.value}))}
+                    placeholder="1204 NW Glisan St"
+                    style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>Address line 2 <span style={{ fontSize:10, color:C.muted, fontWeight:400 }}>(optional)</span></label>
+                  <input value={profile.addrLine2} onChange={e => setProfile(p => ({...p, addrLine2: e.target.value}))}
+                    placeholder="Suite, unit, building, floor, etc."
+                    style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12, marginBottom:18 }}>
+                <div>
+                  <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>City</label>
+                  <input value={profile.city} onChange={e => setProfile(p => ({...p, city: e.target.value}))}
+                    style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>State / region</label>
+                  <input value={profile.state} onChange={e => setProfile(p => ({...p, state: e.target.value}))}
+                    style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+                </div>
+                <div>
+                  <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>ZIP / postal</label>
+                  <input value={profile.zip} onChange={e => setProfile(p => ({...p, zip: e.target.value}))}
+                    style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+                </div>
+              </div>
               <div style={{ marginBottom:22 }}>
-                <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>Bio / About</label>
+                <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>Country <span style={{ fontSize:10, color:C.muted, fontWeight:400 }}>(optional)</span></label>
+                <input value={profile.country} onChange={e => setProfile(p => ({...p, country: e.target.value}))}
+                  placeholder="United States"
+                  style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box" }}/>
+              </div>
+
+              {/* Bio */}
+              <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 10px" }}>About</p>
+              <div style={{ marginBottom:22 }}>
+                <label style={{ fontSize:12, color:C.muted, display:"block", marginBottom:6, fontWeight:500 }}>Bio / studio description</label>
                 <textarea value={profile.bio} onChange={e => setProfile(p => ({...p, bio:e.target.value}))} rows={3}
+                  placeholder="A short blurb about your studio — appears on your community profile."
                   style={{ width:"100%", padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, color:C.ink, background:C.cream, resize:"vertical", lineHeight:1.7, fontFamily:"inherit", boxSizing:"border-box" }}/>
               </div>
               <button onClick={save}
@@ -26986,7 +27107,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
     portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id} projects={appProjects} onSelectProject={(pid) => setPortalProjId(pid)} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery}/>,
-    account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
+    account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} brandKit={brandKit} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
   // ── Client Portal rendering ──
