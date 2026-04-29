@@ -26352,6 +26352,9 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
   const [ready,     setReady]     = useState(false);
   const [justCopied, setJustCopied] = useState(false);
   const [showHomeEdit, setShowHomeEdit] = useState(false);
+  // Side-by-side preview: "desktop" / "mobile" / "both". Defaults to
+  // both so the photographer immediately sees the responsive layout.
+  const [viewMode, setViewMode] = useState("both");
   const projectList = Array.isArray(projects) ? projects : [];
   const currentProj = projectList.find(p => p.id === projId);
   // Editable Home-page customization lives on galleryDelivery[projId].
@@ -26455,6 +26458,23 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
               padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, transition:"all .15s", minWidth:78 }}>
             {justCopied ? "✓ Copied!" : "Copy link"}
           </button>
+          {/* View-mode toggle: switch between desktop, mobile, or both */}
+          <div style={{ display:"flex", background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.15)", borderRadius:8, padding:2 }}>
+            {[
+              ["desktop", "Desktop", "M2 4h20v12H2zM8 20h8M12 16v4"],
+              ["mobile",  "Mobile",  "M7 2h10a2 2 0 012 2v16a2 2 0 01-2 2H7a2 2 0 01-2-2V4a2 2 0 012-2zM12 18h.01"],
+              ["both",    "Both",    "M3 4h8v12H3zM13 8h8v8h-8zM3 20h18"],
+            ].map(([id, label, path]) => (
+              <button key={id} onClick={() => setViewMode(id)}
+                title={label}
+                style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", border:"none", background: viewMode === id ? "rgba(245,242,238,.18)" : "transparent", color:"#f5f2ee", borderRadius:6, cursor:"pointer", fontSize:11, fontFamily:"inherit", fontWeight: viewMode === id ? 600 : 400 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d={path}/>
+                </svg>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
           <button onClick={() => setShowHomeEdit(s => !s)}
             title="Customize the Home page greeting + welcome message"
             style={{ background: showHomeEdit ? "rgba(196,151,74,.25)" : "none", border:`1px solid ${showHomeEdit?"rgba(196,151,74,.6)":"rgba(255,255,255,.2)"}`, color:"#f5f2ee",
@@ -26518,12 +26538,36 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
         </div>
       )}
       {ready ? (
-        <iframe
-          key={iframeKey}
-          src={src}
-          title="Client Portal Preview"
-          style={{ flex:1, width:"100%", minHeight:"calc(100vh - 50px)", border:"none", background:"#fff" }}
-        />
+        <div style={{ flex:1, display:"flex", flexDirection:"row", gap:14, padding: viewMode === "desktop" ? 0 : "16px", justifyContent: viewMode === "mobile" ? "center" : "stretch", overflow:"auto", minHeight:"calc(100vh - 90px)" }}>
+          {/* Desktop frame */}
+          {(viewMode === "desktop" || viewMode === "both") && (
+            <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column" }}>
+              {viewMode === "both" && (
+                <div style={{ fontSize:10, fontWeight:600, color:"rgba(245,242,238,.5)", textTransform:"uppercase", letterSpacing:1, padding:"4px 0 8px", textAlign:"center" }}>Desktop</div>
+              )}
+              <iframe
+                key={`d-${iframeKey}`}
+                src={src}
+                title="Client Portal Desktop Preview"
+                style={{ flex:1, width:"100%", minHeight: viewMode === "desktop" ? "calc(100vh - 50px)" : 700, border: viewMode === "desktop" ? "none" : "1px solid rgba(255,255,255,.12)", borderRadius: viewMode === "desktop" ? 0 : 8, background:"#fff" }}
+              />
+            </div>
+          )}
+          {/* Mobile frame — sized like an iPhone, centered, with subtle device chrome */}
+          {(viewMode === "mobile" || viewMode === "both") && (
+            <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center" }}>
+              <div style={{ fontSize:10, fontWeight:600, color:"rgba(245,242,238,.5)", textTransform:"uppercase", letterSpacing:1, padding:"4px 0 8px" }}>Mobile · 390 × 760</div>
+              <div style={{ width:390, height:760, borderRadius:32, background:"#1a1a1a", padding:10, boxShadow:"0 12px 36px rgba(0,0,0,.55), inset 0 0 0 2px rgba(255,255,255,.06)" }}>
+                <iframe
+                  key={`m-${iframeKey}`}
+                  src={src}
+                  title="Client Portal Mobile Preview"
+                  style={{ width:"100%", height:"100%", border:"none", borderRadius:24, background:"#fff" }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(245,242,238,.5)", fontSize:13 }}>
           Saving latest changes…
