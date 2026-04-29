@@ -23019,10 +23019,20 @@ const TIMELINE_ICONS = {
   proposal: { icon:"📑", color:"#6a7a8a", bg:"#eef2f5" },
 };
 
-const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProject }) => {
+const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProject, clientChats, setClientChats, supabaseSession, brandKit }) => {
   const clients = clientsProp || CLIENTS_SEED;
   const [selId,       setSelId]        = useState("cl1");
-  const [detailTab,   setDetailTab]    = useState("overview"); // overview | projects | financials | timeline
+  const [detailTab,   setDetailTab]    = useState("overview"); // overview | projects | financials | timeline | messages
+  const [chatDraft,   setChatDraft]    = useState("");
+  const [chatSending, setChatSending]  = useState(false);
+  // Photographer's display name (used as senderName on outgoing chat msgs).
+  const myDisplayName = (supabaseSession?.user?.user_metadata?.full_name)
+    || (brandKit?.studioName)
+    || (supabaseSession?.user?.email?.split("@")[0])
+    || "Studio";
+  // Slug helper — must match the SQL public._slugify() used by the RPCs so
+  // both sides agree on the chat key.
+  const slugifyName = (s) => (s||"").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
   const [search,      setSearch]       = useState("");
   const [tagFilter,   setTagFilter]    = useState("All");
   const [sortBy,      setSortBy]       = useState("name"); // name | spend | recent | projects
@@ -23273,8 +23283,8 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                   <>
                     <button onClick={()=>{ setEditMode(true); setEditClient({...sel}); }}
                       style={{ padding:"8px 16px", border:`1px solid ${C.border}`, borderRadius:9, background:"#fff", cursor:"pointer", fontSize:12, color:C.ink, fontWeight:500 }}>Edit</button>
-                    <button onClick={()=>{ setShowMsg(true); setMsgDraft(""); setMsgSent(false); }}
-                      style={{ padding:"8px 16px", border:`1px solid ${C.border}`, borderRadius:9, background:"#fff", cursor:"pointer", fontSize:12, color:C.ink, fontWeight:500 }}>Message</button>
+                    <button onClick={()=>setDetailTab("messages")}
+                      style={{ padding:"8px 16px", border:`1px solid ${C.border}`, borderRadius:9, background:detailTab==="messages"?C.warm:"#fff", cursor:"pointer", fontSize:12, color:C.ink, fontWeight:500 }}>Message</button>
                     <button onClick={()=>{ setShowNewProj(true); setProjForm({ name:`${sel.name} — `, type:"Wedding Photography", date:"", budget:"", notes:"" }); setProjCreated(false); }}
                       style={{ padding:"8px 18px", border:"none", borderRadius:9, background:C.ink, color:"#fff", cursor:"pointer", fontSize:12, fontWeight:600 }}>+ New Project</button>
                   </>
@@ -23300,7 +23310,7 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
 
             {/* Sub-tabs */}
             <div style={{ display:"flex", gap:0 }}>
-              {[["overview","Overview"],["projects","Projects"],["financials","Financials"],["timeline","Timeline"]].map(([id,lbl])=>(
+              {[["overview","Overview"],["projects","Projects"],["messages","Messages"],["financials","Financials"],["timeline","Timeline"]].map(([id,lbl])=>(
                 <button key={id} onClick={()=>setDetailTab(id)}
                   style={{ padding:"10px 18px", fontSize:13, fontWeight:detailTab===id?600:400, color:detailTab===id?C.ink:C.muted, background:"transparent", border:"none", borderBottom:`2px solid ${detailTab===id?C.ink:"transparent"}`, cursor:"pointer" }}>
                   {lbl}
@@ -23472,6 +23482,100 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                 )}
               </div>
             )}
+
+            {/* ── MESSAGES TAB (general chat with this CRM client) ──
+                Persistent thread between the photographer and this client,
+                separate from any project chat. Messages are stored in
+                clientChats[slug(client.name)] and synced via the auto-save
+                loop. The same thread shows up on the public client portal
+                under Messages > General chat (matched by visitor identity
+                slug → CRM client name slug).                                */}
+            {detailTab === "messages" && (() => {
+              const slug = slugifyName(sel.name);
+              const msgs = (clientChats && clientChats[slug]) || [];
+              const grouped = msgs.reduce((acc, m, i) => {
+                const prev = msgs[i-1]; const next = msgs[i+1];
+                const isFirst = !prev || prev.from !== m.from;
+                const isLast  = !next || next.from !== m.from;
+                return [...acc, { ...m, isFirst, isLast }];
+              }, []);
+              const sendChat = () => {
+                const text = chatDraft.trim();
+                if (!text || chatSending) return;
+                setChatSending(true);
+                const msg = { id:"gm_"+Date.now(), from:"studio", senderName: myDisplayName, text, ts: new Date().toISOString() };
+                if (setClientChats) {
+                  setClientChats(prev => ({ ...prev, [slug]: [...((prev && prev[slug]) || []), msg] }));
+                }
+                setChatDraft("");
+                setChatSending(false);
+              };
+              const clientInits = (sel.name||"").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+              return (
+                <div style={{ maxWidth:680, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 240px)", border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden", background:"#fff" }}>
+                  {/* Header */}
+                  <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:"#fafafa", display:"flex", alignItems:"center", gap:10 }}>
+                    <div style={{ width:32, height:32, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>{clientInits}</div>
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{sel.name}</p>
+                      <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>Direct chat — separate from project chats</p>
+                    </div>
+                  </div>
+                  {/* Messages */}
+                  <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 16px", display:"flex", flexDirection:"column", gap:1 }}>
+                    {grouped.length === 0 && (
+                      <div style={{ textAlign:"center", padding:"60px 20px", color:C.muted }}>
+                        <div style={{ fontSize:36, marginBottom:8 }}>💬</div>
+                        <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>No messages yet</p>
+                        <p style={{ fontSize:11, color:C.muted, margin:0 }}>Start a private chat with {sel.name.split(" ")[0]}</p>
+                      </div>
+                    )}
+                    {grouped.map((m, i) => {
+                      const isMe = m.from === "studio";
+                      const senderDisplay = isMe ? (m.senderName || myDisplayName) : (m.senderName || sel.name);
+                      const showName = !isMe && m.isFirst;
+                      const showTime = m.isLast;
+                      const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time||"");
+                      const br = { tl:18, tr:18, bl:18, br:18 };
+                      if (isMe) br.br = m.isLast ? 4 : 18; else br.bl = m.isLast ? 4 : 18;
+                      return (
+                        <div key={m.id||i}>
+                          {showName && <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 6px", fontWeight:600 }}>{senderDisplay}</p>}
+                          <div style={{ display:"flex", justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
+                            <div style={{ maxWidth:"70%", padding:"10px 13px", fontSize:14, lineHeight:1.5,
+                              borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                              background: isMe ? "#007AFF" : "#E9E9EB", color: isMe ? "#fff" : "#000" }}>
+                              {m.text}
+                            </div>
+                          </div>
+                          {showTime && (
+                            <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left" }}>
+                              {senderDisplay}{isMe ? " (you)" : ""} · {timeStr}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Compose */}
+                  <div style={{ padding:"10px 12px", borderTop:`1px solid ${C.border}`, background:"#fff" }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                      <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
+                        <input value={chatDraft} onChange={e=>setChatDraft(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }}}
+                          placeholder={`Message ${sel.name.split(" ")[0]} privately…`}
+                          style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                      </div>
+                      <button onClick={sendChat} disabled={!chatDraft.trim() || chatSending}
+                        style={{ width:34, height:34, borderRadius:"50%", background:chatDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:chatDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                      </button>
+                    </div>
+                    <p style={{ fontSize:10, color:C.muted, margin:"6px 4px 0", textAlign:"center" }}>This chat is paired with {sel.name}'s portal under Messages → General chat. They'll see your replies the next time they open the portal.</p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ── FINANCIALS TAB ── */}
             {detailTab === "financials" && (
@@ -26255,6 +26359,9 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
   const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
 
+  // ── Per-client direct chat (CRM client ↔ photographer, separate from
+  // project chats). Keyed by slug(client.name). Persisted via extras.
+  const [clientChats, setClientChats] = useState({});
   // ── Lifted from Projects so they survive logout / login ────────────────
   const [projChecklists, setProjChecklists] = useState({});
   const [projTimeLogs,   setProjTimeLogs]   = useState({
@@ -26317,6 +26424,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
           if (e.projChecklists)     setProjChecklists(e.projChecklists);
           if (e.projTimeLogs)       setProjTimeLogs(e.projTimeLogs);
           if (e.projExpenses)       setProjExpenses(e.projExpenses);
+          if (e.clientChats)        setClientChats(e.clientChats);
         }
       }
       setDbLoaded(true);
@@ -26365,6 +26473,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
       projChecklists,
       projTimeLogs,
       projExpenses,
+      clientChats,
     },
   };
 
@@ -26402,6 +26511,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     loyaltyConfig, notifications, commNotifs,
     tmTimesheets, tmAvailability, tmDmMessages, tmFileSubmissions,
     projChecklists, projTimeLogs, projExpenses,
+    clientChats,
     dbLoaded,
   ]);
 
@@ -26458,7 +26568,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
     projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
-    clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
+    clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
     proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages}/>,

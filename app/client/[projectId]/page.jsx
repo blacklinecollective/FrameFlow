@@ -506,6 +506,15 @@ export default function ClientPortalPage({ params }) {
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
   const [selectedPmId, setSelectedPmId] = useState(null); // chosen payment method id
+  // ── Messages tab sub-tabs ────────────────────────────────────────────
+  // Two parallel chats: per-project (everyone in the project shares it)
+  // and per-client (private 1:1 with the photographer). The general chat
+  // lives in the photographer's app_state.extras.clientChats[<slug>] and
+  // is keyed by the visitor's identity slug.
+  const [messagesSubTab, setMessagesSubTab] = useState("project"); // "project" | "general"
+  const [generalMsgs,    setGeneralMsgs]    = useState([]);
+  const [generalDraft,   setGeneralDraft]   = useState("");
+  const [generalSending, setGeneralSending] = useState(false);
   // ── Shared chat identity ──────────────────────────────────────────────
   // The portal supports multiple participants in one project chat (e.g.
   // Mike + Kelly + the photographer). Each visitor identifies themselves
@@ -639,6 +648,31 @@ export default function ClientPortalPage({ params }) {
       setIdentityPickerOpen(true);
     }
   }, [tab, identity, identityResolved, identityPickerOpen]);
+
+  // ── Fetch + poll general-chat messages when the visitor has an identity
+  // and the Messages > General sub-tab is open. Lives above early returns
+  // (Rules of Hooks).
+  useEffect(() => {
+    if (tab !== "messages" || messagesSubTab !== "general") return;
+    if (!identity?.name || !projectId) return;
+    let cancelled = false;
+    const fetchOnce = async () => {
+      try {
+        const sb = sbRef.current;
+        if (!sb) return;
+        const { data: arr } = await sb.rpc("get_general_messages", {
+          p_project_id:    Number(projectId),
+          p_contact_name:  identity.name,
+          p_owner_user_id: ownerUserIdRef.current || null,
+        });
+        if (cancelled) return;
+        if (Array.isArray(arr)) setGeneralMsgs(arr);
+      } catch (_) {}
+    };
+    fetchOnce();
+    const iv = setInterval(fetchOnce, 6000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [tab, messagesSubTab, identity?.name, projectId]);
 
   // ── Initialize the profile form when identity + data resolve ─────────
   // IMPORTANT: this hook must live above the early-return blocks below,
@@ -921,6 +955,36 @@ export default function ClientPortalPage({ params }) {
       phone: profileForm.phone,
       address: profileForm.address,
     });
+  };
+
+  // Send a message into the general (1:1 with photographer) chat thread.
+  const sendGeneralMsg = async () => {
+    const text = generalDraft.trim();
+    if (!text || generalSending) return;
+    if (!identity) { setIdentityPickerOpen(true); return; }
+    setGeneralSending(true);
+    const msg = {
+      id:         "gm_" + Date.now(),
+      from:       "client",
+      senderName: identity.name,
+      senderSlug: identity.slug,
+      text,
+      ts:         new Date().toISOString(),
+    };
+    setGeneralMsgs(prev => [...(prev || []), msg]);
+    setGeneralDraft("");
+    try {
+      const sb = sbRef.current;
+      if (sb) {
+        await sb.rpc("send_general_message", {
+          p_project_id:    Number(projectId),
+          p_message:       msg,
+          p_contact_name:  identity.name,
+          p_owner_user_id: ownerUserIdRef.current || null,
+        });
+      }
+    } catch (_) {}
+    setGeneralSending(false);
   };
 
   // Confirm an identity picker selection.
@@ -1393,6 +1457,16 @@ export default function ClientPortalPage({ params }) {
         })();
         return (
           <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
+            {/* Sub-tab switcher: Project chat (everyone) vs General chat (1:1) */}
+            <div style={{ display:"flex", gap:6, padding:"10px 16px 0", flexShrink:0 }}>
+              {[["project","Project chat"],["general","General chat"]].map(([id, lbl]) => (
+                <button key={id} onClick={() => setMessagesSubTab(id)}
+                  style={{ flex:1, padding:"8px 0", background: messagesSubTab===id ? brandColor : (dark?"rgba(255,255,255,.06)":"#fff"), color: messagesSubTab===id ? "#fff" : fg, border:`1px solid ${messagesSubTab===id?brandColor:brd}`, borderRadius:10, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          {messagesSubTab === "project" && (<>
             {/* Header */}
             <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, background:bg, flexShrink:0 }}>
               <div>
@@ -1483,6 +1557,95 @@ export default function ClientPortalPage({ params }) {
               </div>
               {msgSent && <p style={{ fontSize:11, color:C.green, marginTop:6, textAlign:"center" }}>✓ Delivered</p>}
             </div>
+          </>)}
+          {messagesSubTab === "general" && (() => {
+            // ── General (1:1) chat header + messages + compose ──
+            const gMsgs = generalMsgs || [];
+            const senderKey2 = (m) => `${m?.from||""}|${slugify(m?.senderName||"")}`;
+            const groupedG = gMsgs.reduce((acc, m, i) => {
+              const prev = gMsgs[i-1]; const next = gMsgs[i+1];
+              return [...acc, { ...m, isFirst: !prev || senderKey2(prev) !== senderKey2(m), isLast: !next || senderKey2(next) !== senderKey2(m) }];
+            }, []);
+            return (
+              <>
+                <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, background:bg, flexShrink:0 }}>
+                  <div>
+                    <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>General Chat</p>
+                    <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>Private with {studioName} · not tied to any project</p>
+                  </div>
+                  {identity && (
+                    <span style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 10px", border:`1px solid ${brd}`, borderRadius:10, background:dark?"rgba(255,255,255,.06)":"#fff" }}>
+                      <span style={{ width:22, height:22, borderRadius:"50%", background:colorForName(identity.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>{initials(identity.name)}</span>
+                      <span style={{ fontSize:12, color:fg, fontWeight:600 }}>{identity.name}</span>
+                    </span>
+                  )}
+                </div>
+                <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", background:msgBg, display:"flex", flexDirection:"column", gap:1 }}>
+                  {!identity && (
+                    <div style={{ textAlign:"center", padding:"60px 20px", color:sub }}>
+                      <div style={{ fontSize:36, marginBottom:8 }}>👤</div>
+                      <p style={{ fontSize:13, fontWeight:600, color:fg, margin:"0 0 6px" }}>Who are you?</p>
+                      <p style={{ fontSize:12, color:sub, margin:"0 0 14px" }}>Pick your identity to start a private chat with {studioName}.</p>
+                      <button onClick={() => setIdentityPickerOpen(true)} style={{ padding:"9px 18px", background:brandColor, color:"#fff", border:"none", borderRadius:10, fontSize:12, fontWeight:600, cursor:"pointer" }}>Pick your name</button>
+                    </div>
+                  )}
+                  {identity && groupedG.length === 0 && (
+                    <div style={{ textAlign:"center", padding:"60px 0", color:sub }}>
+                      <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
+                      <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 6px" }}>No messages yet</p>
+                      <p style={{ fontSize:13, color:sub, margin:0 }}>Say something privately to {studioName}.</p>
+                    </div>
+                  )}
+                  {groupedG.map((m, i) => {
+                    const fromPhotographer = m.from !== "client";
+                    const mine = !fromPhotographer && identity && slugify(m.senderName||"") === identity.slug;
+                    const senderDisplay = fromPhotographer ? (m.senderName || studioName) : (m.senderName || identity?.name || "You");
+                    const senderColor = fromPhotographer ? "#636366" : colorForName(senderDisplay);
+                    const showName = !mine && m.isFirst;
+                    const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time||"");
+                    const br = { tl:18, tr:18, bl:18, br:18 };
+                    if (mine) br.br = m.isLast ? 4 : 18; else br.bl = m.isLast ? 4 : 18;
+                    return (
+                      <div key={m.id||i}>
+                        {showName && (
+                          <p style={{ fontSize:11, color:senderColor, fontWeight:700, margin:"10px 0 3px 6px" }}>
+                            {senderDisplay}{fromPhotographer ? " · Photographer" : ""}
+                          </p>
+                        )}
+                        <div style={{ display:"flex", justifyContent:mine?"flex-end":"flex-start", marginBottom:1 }}>
+                          <div style={{ maxWidth:"72%", padding:"10px 14px", fontSize:14, lineHeight:1.5,
+                            borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                            background: mine ? bubbleMe : bubbleThem, color: mine ? textMe : textThem }}>
+                            {m.text}
+                          </div>
+                        </div>
+                        {m.isLast && (
+                          <p style={{ fontSize:10, color:sub, margin:"2px 0 8px", textAlign:mine?"right":"left" }}>
+                            {senderDisplay}{mine ? " (you)" : ""} · {timeStr}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ padding:"10px 16px 16px", borderTop:`1px solid ${brd}`, background:bg, flexShrink:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ flex:1, display:"flex", alignItems:"center", background:dark?"#2c2c2e":"#fff", border:`1.5px solid ${dark?"#3a3a3c":"#c7c7cc"}`, borderRadius:22, padding:"9px 16px" }}>
+                      <input value={generalDraft} onChange={e=>setGeneralDraft(e.target.value)}
+                        onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendGeneralMsg();}}}
+                        disabled={!identity || generalSending}
+                        placeholder={identity ? `Message ${studioName} privately…` : "Pick your name to chat"}
+                        style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:fg, outline:"none", fontFamily:"inherit" }}/>
+                    </div>
+                    <button onClick={sendGeneralMsg} disabled={!generalDraft.trim() || generalSending || !identity}
+                      style={{ width:36, height:36, borderRadius:"50%", background:(generalDraft.trim()&&!generalSending&&identity)?brandColor:"#c7c7cc", border:"none", cursor:(generalDraft.trim()&&!generalSending&&identity)?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
           </div>
         );
       })()}
