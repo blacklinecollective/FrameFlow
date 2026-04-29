@@ -5233,6 +5233,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
   const [projMessages,  setProjMessages]  = useState({}); // { [projId]: { threadId: { id, contactName, messages: [] } } } — loaded from DB
   const [showAddContact, setShowAddContact] = useState(false);
   const [justCopiedId,   setJustCopiedId]   = useState(null); // contact whose link was just copied (for inline button feedback)
+  const [copiedPortalLink, setCopiedPortalLink] = useState(false); // green-flash on the project header's Copy button
   const [projContacts, setProjContacts] = useState({});
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
   const [newContact, setNewContact] = useState(blankContact);
@@ -5447,9 +5448,11 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
       ]},
       { id:"client",    label:"Client",    icon:"users",  sub:[
         { id:"contacts", label:"Contacts",  icon:"users"  },
-        { id:"messages", label:"Messages",  icon:"msg"    },
         { id:"preview",  label:"Preview",   icon:"eye"    },
       ]},
+      // Messages was previously nested under Client → lifted to a top-level
+      // tab so it sits one click away from anywhere in the project.
+      { id:"messages",  label:"Messages",  icon:"msg",    sub:null },
       { id:"business",  label:"Business",  icon:"file",   sub:[
         { id:"invoices",    label:"Invoices",      icon:"file"   },
         { id:"contracts",   label:"Contracts",     icon:"sign"   },
@@ -5759,6 +5762,43 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
             <Btn icon="plus">Add Item</Btn>
           </div>
         </div>
+
+        {/* ── Portal link strip ─────────────────────────────────────────
+            Always-visible copyable link to this project's public client
+            portal. Each contact has their own per-contact link in the
+            Contacts tab (auto-tags their messages); this generic one is
+            the fallback for one-off shares.                            */}
+        {(() => {
+          const ownerParam = supabaseSession?.user?.id ? `?owner=${supabaseSession.user.id}` : "";
+          const portalUrl = (typeof window !== "undefined" ? window.location.origin : "") + `/client/${proj.id}${ownerParam}`;
+          return (
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:11 }}>
+              <span style={{ fontSize:11, color:C.muted, fontWeight:600, textTransform:"uppercase", letterSpacing:.6, flexShrink:0 }}>Client portal</span>
+              <code
+                onClick={async () => {
+                  const ok = await copyToClipboard(portalUrl);
+                  if (ok) { setCopiedPortalLink(true); setTimeout(() => setCopiedPortalLink(false), 1800); }
+                }}
+                title="Click to copy"
+                style={{ flex:1, minWidth:0, fontSize:11, color:C.ink, fontFamily:"ui-monospace, SF Mono, monospace", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", padding:"6px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:7, cursor:"pointer", userSelect:"all" }}>
+                {portalUrl}
+              </code>
+              <button
+                onClick={async () => {
+                  const ok = await copyToClipboard(portalUrl);
+                  if (ok) { setCopiedPortalLink(true); setTimeout(() => setCopiedPortalLink(false), 1800); }
+                }}
+                style={{ padding:"7px 14px", background: copiedPortalLink ? "#22a06b" : "#007AFF", color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0, transition:"background .15s", minWidth:88 }}>
+                {copiedPortalLink ? "✓ Copied!" : "Copy link"}
+              </button>
+              <a href={portalUrl} target="_blank" rel="noopener noreferrer"
+                style={{ padding:"7px 12px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0, textDecoration:"none" }}
+                title="Open the client portal in a new tab">
+                Open ↗
+              </a>
+            </div>
+          );
+        })()}
 
         {/* ── Primary nav ── */}
         <div style={{ display:"flex", gap:0, background:C.dark, borderRadius:"10px 10px 0 0", overflow:"hidden" }}>
