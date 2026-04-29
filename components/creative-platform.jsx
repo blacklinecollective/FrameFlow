@@ -3901,6 +3901,17 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
   const movePhotoToFolder = (photoIdx, folderId) => {
     setPhotos(prev => (prev || []).map((p, i) => i === photoIdx ? { ...p, folderId: folderId || null } : p));
   };
+  // Bulk-move every currently-selected photo into the chosen folder (or null
+  // for Ungrouped). Resets select mode so the toolbar collapses afterwards.
+  const moveSelectedToFolder = (folderId) => {
+    if (!selectedPhotoIdxs.length) return;
+    const nextFolder = folderId === "_none" ? null : (folderId || null);
+    setPhotos(prev => (prev || []).map((p, i) =>
+      selectedPhotoIdxs.includes(i) ? { ...p, folderId: nextFolder } : p
+    ));
+    setSelectedPhotoIdxs([]);
+    setPhotoSelectMode(false);
+  };
 
   // Helper: save a change to delivery object
   const saveDelivery = (changes) => {
@@ -4072,15 +4083,31 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               {photoSelectMode ? (selectedPhotoIdxs.length > 0 ? `✓ ${selectedPhotoIdxs.length} selected` : "Selecting…") : "Select"}
             </button>
             {photoSelectMode && selectedPhotoIdxs.length > 0 && (
-              <button onClick={() => {
-                  if (!window.confirm(`Delete ${selectedPhotoIdxs.length} photo${selectedPhotoIdxs.length!==1?"s":""}? This cannot be undone.`)) return;
-                  setPhotos(prev => (prev||[]).filter((_, i) => !selectedPhotoIdxs.includes(i)));
-                  setSelectedPhotoIdxs([]);
-                  setPhotoSelectMode(false);
-                }}
-                style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:"#e05a5a", color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
-                Delete {selectedPhotoIdxs.length}
-              </button>
+              <>
+                {/* Move-to dropdown — bulk-reassigns the selection's folderId */}
+                <select
+                  defaultValue=""
+                  onChange={(e) => { if (e.target.value !== "") { moveSelectedToFolder(e.target.value); e.target.value = ""; } }}
+                  style={{ padding:"8px 10px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", fontFamily:"inherit" }}
+                  title="Move selected photos to a folder">
+                  <option value="" disabled>Move {selectedPhotoIdxs.length} to…</option>
+                  {folders.map(f => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                  {folders.length > 0 && <option disabled>──────────</option>}
+                  <option value="_none">Ungrouped (no folder)</option>
+                  {folders.length === 0 && <option disabled>(create a folder first)</option>}
+                </select>
+                <button onClick={() => {
+                    if (!window.confirm(`Delete ${selectedPhotoIdxs.length} photo${selectedPhotoIdxs.length!==1?"s":""}? This cannot be undone.`)) return;
+                    setPhotos(prev => (prev||[]).filter((_, i) => !selectedPhotoIdxs.includes(i)));
+                    setSelectedPhotoIdxs([]);
+                    setPhotoSelectMode(false);
+                  }}
+                  style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:"#e05a5a", color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                  Delete {selectedPhotoIdxs.length}
+                </button>
+              </>
             )}
           </>
         )}
