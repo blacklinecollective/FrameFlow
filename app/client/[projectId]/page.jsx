@@ -492,6 +492,9 @@ export default function ClientPortalPage({ params }) {
   const [tab,      setTab]      = useState("gallery");
   const [favs,     setFavs]     = useState([]);
   const [lightbox, setLightbox] = useState(null);
+  // Currently-selected folder on the gallery tab. null = folder grid view
+  // (when folders exist) OR flat-gallery view (when none exist).
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [msgDraft,  setMsgDraft]  = useState("");
   const [msgs,      setMsgs]      = useState([]);
   const [msgSent,   setMsgSent]   = useState(false);
@@ -703,7 +706,8 @@ export default function ClientPortalPage({ params }) {
     </div>
   );
 
-  const { delivery = {}, project = {}, photos: rawPhotos, brandKit = {}, invoices = [], videoDeliverables: rawVids, videoComments: rawCmts } = data || {};
+  const { delivery = {}, project = {}, photos: rawPhotos, galleryFolders: rawFolders, brandKit = {}, invoices = [], videoDeliverables: rawVids, videoComments: rawCmts } = data || {};
+  const galleryFolders = Array.isArray(rawFolders) ? rawFolders : [];
   const photos = Array.isArray(rawPhotos) ? rawPhotos : [];
   const videoDeliverables = Array.isArray(rawVids) ? rawVids : [];
   const videoComments = rawCmts && typeof rawCmts === "object" ? rawCmts : {};
@@ -958,46 +962,147 @@ export default function ClientPortalPage({ params }) {
       </div>
 
       {/* ── Gallery tab ── */}
-      {tab === "gallery" && (
-        <div style={{ maxWidth:1100, margin:"0 auto", padding:"32px 24px" }}>
-          <div style={{ textAlign:"center", marginBottom:36 }}>
-            <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:3, margin:"0 0 10px" }}>{project.type} · {new Date().toLocaleDateString("en-US",{year:"numeric",month:"long"})}</p>
-            <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 12px", letterSpacing:-.5 }}>
-              {delivery.galleryTitle || (project.name ? `${project.name} — Your Gallery` : "Your Gallery")}
-            </h1>
-            {delivery.message && <p style={{ fontSize:14, color:sub, maxWidth:540, margin:"0 auto 24px", lineHeight:1.7 }}>{delivery.message}</p>}
-            {photos.length > 0 && (
-              <button onClick={downloadAllPhotos} disabled={!!dlProgress}
-                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"11px 24px", background:dlProgress?"#a0a0a0":brandColor, color:"#fff", borderRadius:12, fontSize:13, fontWeight:600, cursor:dlProgress?"not-allowed":"pointer", border:"none", transition:"background .15s" }}>
-                {dlProgress
-                  ? (dlProgress.done === dlProgress.total
-                      ? `✓ Downloaded all ${dlProgress.total} ${dlProgress.total===1?"photo":"photos"}`
-                      : `↓ Downloading ${dlProgress.done} / ${dlProgress.total}…`)
-                  : `↓ Download All (${photos.length} ${photos.length===1?"photo":"photos"})`}
+      {tab === "gallery" && (() => {
+        // Decide what to show:
+        // - No folders configured → classic flat gallery (all photos).
+        // - Folders configured + nothing selected → folder grid (cards).
+        // - Folders configured + a folder selected → photos in that folder.
+        // - "_ungrouped" pseudo-folder for any photos without a folderId.
+        const hasFolders     = galleryFolders.length > 0;
+        const ungroupedPhotos = photos.filter(p => !p?.folderId);
+        const showGrid       = hasFolders && selectedFolderId === null;
+        const photosInFolder = (folderId) => folderId === "_ungrouped"
+          ? photos.filter(p => !p?.folderId)
+          : photos.filter(p => p?.folderId === folderId);
+        const selectedFolder = galleryFolders.find(f => f.id === selectedFolderId);
+        const visiblePhotos  = !hasFolders ? photos
+          : selectedFolderId === null ? []
+          : photosInFolder(selectedFolderId);
+
+        // Download-all helper that respects the current view (folder vs all).
+        const downloadVisible = async () => {
+          if (!visiblePhotos.length || dlProgress) return;
+          setDlProgress({ done: 0, total: visiblePhotos.length });
+          for (let i = 0; i < visiblePhotos.length; i++) {
+            const ph = visiblePhotos[i];
+            const url = typeof ph === "string" ? ph : ph?.url;
+            const ext = (url || "").split("?")[0].split(".").pop() || "jpg";
+            const filename = ph?.name || `photo-${i + 1}.${ext}`;
+            await downloadBlob(url, filename);
+            setDlProgress({ done: i + 1, total: visiblePhotos.length });
+            if (i < visiblePhotos.length - 1) await new Promise(r => setTimeout(r, 300));
+          }
+          setTimeout(() => setDlProgress(null), 2500);
+        };
+
+        return (
+          <div style={{ maxWidth:1100, margin:"0 auto", padding:"32px 24px" }}>
+            {/* Breadcrumb back to folder grid */}
+            {hasFolders && selectedFolderId !== null && (
+              <button onClick={() => setSelectedFolderId(null)}
+                style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 14px", background:dark?"rgba(255,255,255,.06)":"#fff", border:`1px solid ${brd}`, borderRadius:9, fontSize:12, fontWeight:600, color:fg, cursor:"pointer", marginBottom:18, fontFamily:"inherit" }}>
+                ← All folders
               </button>
             )}
-            {favs.length > 0 && <p style={{ fontSize:12, color:sub, marginTop:10 }}>{favs.length} photo{favs.length!==1?"s":""} hearted</p>}
-          </div>
-          {photos.length === 0 ? (
-            <div style={{ textAlign:"center", padding:"60px 0", color:sub }}><p style={{ fontSize:16 }}>Your photos will appear here once ready.</p></div>
-          ) : (
-            <div style={{ columns:3, columnGap:6 }}>
-              {photos.map((photo, idx) => (
-                <PhotoTile key={idx} photo={photo} isFav={favs.includes(idx)}
-                  onFav={() => setFavs(prev => prev.includes(idx)?prev.filter(x=>x!==idx):[...prev,idx])}
-                  onClick={() => setLightbox(idx)}
-                  onDownload={() => {
-                    const url = typeof photo === "string" ? photo : photo?.url;
-                    const ext = (url||"").split("?")[0].split(".").pop() || "jpg";
-                    const name = photo?.name || `photo-${idx+1}.${ext}`;
-                    const isVid = photo?.type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url||"");
-                    if (isVid) { downloadVideo(url, name); } else { downloadBlob(url, name); }
-                  }}/>
-              ))}
+
+            <div style={{ textAlign:"center", marginBottom:36 }}>
+              <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:3, margin:"0 0 10px" }}>{project.type} · {new Date().toLocaleDateString("en-US",{year:"numeric",month:"long"})}</p>
+              <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 12px", letterSpacing:-.5 }}>
+                {showGrid
+                  ? (delivery.galleryTitle || (project.name ? `${project.name} — Your Galleries` : "Your Galleries"))
+                  : (selectedFolder?.name || delivery.galleryTitle || (project.name ? `${project.name} — Your Gallery` : "Your Gallery"))}
+              </h1>
+              {showGrid
+                ? <p style={{ fontSize:14, color:sub, maxWidth:540, margin:"0 auto 24px", lineHeight:1.7 }}>Pick a folder to view its photos.</p>
+                : (delivery.message && <p style={{ fontSize:14, color:sub, maxWidth:540, margin:"0 auto 24px", lineHeight:1.7 }}>{delivery.message}</p>)}
+              {!showGrid && visiblePhotos.length > 0 && (
+                <button onClick={downloadVisible} disabled={!!dlProgress}
+                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"11px 24px", background:dlProgress?"#a0a0a0":brandColor, color:"#fff", borderRadius:12, fontSize:13, fontWeight:600, cursor:dlProgress?"not-allowed":"pointer", border:"none", transition:"background .15s" }}>
+                  {dlProgress
+                    ? (dlProgress.done === dlProgress.total
+                        ? `✓ Downloaded all ${dlProgress.total} ${dlProgress.total===1?"photo":"photos"}`
+                        : `↓ Downloading ${dlProgress.done} / ${dlProgress.total}…`)
+                    : `↓ Download ${selectedFolder ? `"${selectedFolder.name}"` : "All"} (${visiblePhotos.length} ${visiblePhotos.length===1?"photo":"photos"})`}
+                </button>
+              )}
+              {!showGrid && favs.length > 0 && <p style={{ fontSize:12, color:sub, marginTop:10 }}>{favs.length} photo{favs.length!==1?"s":""} hearted</p>}
             </div>
-          )}
-        </div>
-      )}
+
+            {/* Folder grid view */}
+            {showGrid && (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:14 }}>
+                {galleryFolders.map(f => {
+                  const fp     = photosInFolder(f.id);
+                  const cover  = fp.find(p => p?.url) || null;
+                  const coverUrl = cover ? (typeof cover === "string" ? cover : cover.url) : null;
+                  return (
+                    <button key={f.id} onClick={() => setSelectedFolderId(f.id)}
+                      style={{ display:"flex", flexDirection:"column", alignItems:"stretch", padding:0, background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px solid ${brd}`, borderRadius:14, overflow:"hidden", cursor:"pointer", transition:"transform .15s, box-shadow .15s", textAlign:"left", fontFamily:"inherit" }}
+                      onMouseEnter={e => { e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 6px 16px rgba(0,0,0,.08)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform="none"; e.currentTarget.style.boxShadow="none"; }}>
+                      <div style={{ aspectRatio:"4/3", background: coverUrl ? `url(${coverUrl}) center/cover` : (dark?"rgba(255,255,255,.08)":"#f4efe8"), position:"relative" }}>
+                        {!coverUrl && (
+                          <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                          </div>
+                        )}
+                        <span style={{ position:"absolute", top:8, right:8, padding:"3px 9px", borderRadius:99, background:"rgba(0,0,0,.55)", color:"#fff", fontSize:11, fontWeight:700 }}>{fp.length}</span>
+                      </div>
+                      <div style={{ padding:"12px 14px" }}>
+                        <p style={{ fontSize:14, fontWeight:700, color:fg, margin:0 }}>{f.name}</p>
+                        <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>{fp.length} {fp.length===1?"photo":"photos"}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+                {/* Ungrouped pseudo-folder, only if any */}
+                {ungroupedPhotos.length > 0 && (() => {
+                  const cover = ungroupedPhotos.find(p => p?.url) || null;
+                  const coverUrl = cover ? (typeof cover === "string" ? cover : cover.url) : null;
+                  return (
+                    <button onClick={() => setSelectedFolderId("_ungrouped")}
+                      style={{ display:"flex", flexDirection:"column", padding:0, background:dark?"rgba(255,255,255,.04)":"#fff", border:`1px dashed ${brd}`, borderRadius:14, overflow:"hidden", cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
+                      <div style={{ aspectRatio:"4/3", background: coverUrl ? `url(${coverUrl}) center/cover` : (dark?"rgba(255,255,255,.06)":"#f4efe8"), position:"relative" }}>
+                        <span style={{ position:"absolute", top:8, right:8, padding:"3px 9px", borderRadius:99, background:"rgba(0,0,0,.55)", color:"#fff", fontSize:11, fontWeight:700 }}>{ungroupedPhotos.length}</span>
+                      </div>
+                      <div style={{ padding:"12px 14px" }}>
+                        <p style={{ fontSize:14, fontWeight:700, color:fg, margin:0 }}>Other photos</p>
+                        <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>{ungroupedPhotos.length} not in any folder</p>
+                      </div>
+                    </button>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Folder detail (or flat gallery if no folders) */}
+            {!showGrid && (
+              visiblePhotos.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"60px 0", color:sub }}><p style={{ fontSize:16 }}>{hasFolders ? "This folder is empty." : "Your photos will appear here once ready."}</p></div>
+              ) : (
+                <div style={{ columns:3, columnGap:6 }}>
+                  {visiblePhotos.map((photo, vIdx) => {
+                    // Translate the visible index to the original photos index so favs/lightbox stay consistent.
+                    const idx = photos.indexOf(photo);
+                    return (
+                      <PhotoTile key={idx} photo={photo} isFav={favs.includes(idx)}
+                        onFav={() => setFavs(prev => prev.includes(idx)?prev.filter(x=>x!==idx):[...prev,idx])}
+                        onClick={() => setLightbox(idx)}
+                        onDownload={() => {
+                          const url = typeof photo === "string" ? photo : photo?.url;
+                          const ext = (url||"").split("?")[0].split(".").pop() || "jpg";
+                          const name = photo?.name || `photo-${vIdx+1}.${ext}`;
+                          const isVid = photo?.type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url||"");
+                          if (isVid) { downloadVideo(url, name); } else { downloadBlob(url, name); }
+                        }}/>
+                    );
+                  })}
+                </div>
+              )
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Video Review tab ── */}
       {tab === "video" && (

@@ -3793,7 +3793,7 @@ const ProjectProfitabilityTab = ({ proj, projInvoices, expenses, setExpenses, te
   );
 };
 
-const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp, onPermanentSave }) => {
+const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, galleryPhotosProp, setGalleryPhotosProp, onPermanentSave, foldersForProj, setFoldersForProj }) => {
   // AppShell owns the photos — no local state here.
   // This means photos survive tab switching: when this component unmounts and remounts,
   // galleryPhotosProp (from AppShell's galleryPhotos) is still there unchanged.
@@ -3853,6 +3853,54 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
   const [uploading,    setUploading]    = useState(false);
   const [photoSelectMode, setPhotoSelectMode] = useState(false);
   const [selectedPhotoIdxs, setSelectedPhotoIdxs] = useState([]);
+  // ── Folder state ────────────────────────────────────────────────
+  // null         = "All photos" (no filter)
+  // "_ungrouped" = photos with no folderId
+  // <fld_id>     = a specific folder
+  const folders = foldersForProj || [];
+  const [activeFolderId,   setActiveFolderId]   = useState(null);
+  const [showNewFolder,    setShowNewFolder]    = useState(false);
+  const [newFolderName,    setNewFolderName]    = useState("");
+  const [renamingFolderId, setRenamingFolderId] = useState(null);
+  const [renameDraft,      setRenameDraft]      = useState("");
+  const matchesActiveFolder = (p) => {
+    if (activeFolderId === null) return true;
+    if (activeFolderId === "_ungrouped") return !p?.folderId;
+    return p?.folderId === activeFolderId;
+  };
+  const folderCounts = folders.reduce((acc, f) => {
+    acc[f.id] = photos.filter(p => p.folderId === f.id).length;
+    return acc;
+  }, {});
+  const ungroupedCount = photos.filter(p => !p.folderId).length;
+  const visibleCount   = photos.filter(matchesActiveFolder).length;
+  const createFolder = () => {
+    const name = newFolderName.trim();
+    if (!name || !setFoldersForProj) return;
+    const id = "fld_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    setFoldersForProj(prev => ([...(prev || []), { id, name, createdAt: new Date().toISOString() }]));
+    setActiveFolderId(id);
+    setNewFolderName("");
+    setShowNewFolder(false);
+  };
+  const commitRename = () => {
+    if (!renamingFolderId || !setFoldersForProj) return;
+    const trimmed = renameDraft.trim();
+    if (!trimmed) { setRenamingFolderId(null); return; }
+    setFoldersForProj(prev => (prev || []).map(f => f.id === renamingFolderId ? { ...f, name: trimmed } : f));
+    setRenamingFolderId(null);
+    setRenameDraft("");
+  };
+  const deleteFolder = (folderId) => {
+    if (!setFoldersForProj) return;
+    if (!window.confirm("Delete this folder? Photos in it will be moved to 'Ungrouped'.")) return;
+    setFoldersForProj(prev => (prev || []).filter(f => f.id !== folderId));
+    setPhotos(prev => (prev || []).map(p => p.folderId === folderId ? { ...p, folderId: null } : p));
+    if (activeFolderId === folderId) setActiveFolderId(null);
+  };
+  const movePhotoToFolder = (photoIdx, folderId) => {
+    setPhotos(prev => (prev || []).map((p, i) => i === photoIdx ? { ...p, folderId: folderId || null } : p));
+  };
 
   // Helper: save a change to delivery object
   const saveDelivery = (changes) => {
@@ -3873,6 +3921,9 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     setUploading(true);
     const fileArr = Array.from(files);
     let done = 0;
+    // Capture the folder *at upload time* — if the user switches folders mid-upload
+    // the photos still land in the folder they picked when starting the upload.
+    const targetFolderId = (activeFolderId && activeFolderId !== "_ungrouped") ? activeFolderId : null;
 
     fileArr.forEach((file, idx) => {
       const tmpId = `tmp_${Date.now()}_${idx}`;
@@ -3886,6 +3937,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         url: blobUrl, name: file.name,
         type: isVideo ? "video" : "image",
         uploading: true, _tmpId: tmpId,
+        folderId: targetFolderId,
       }]);
 
       // Upload to Supabase Storage
@@ -3895,7 +3947,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         if (!error && data) {
           const { data: { publicUrl } } = supabase.storage.from("Media").getPublicUrl(data.path);
           URL.revokeObjectURL(blobUrl);
-          const permanentEntry = { url: publicUrl, name: file.name, type: isVideo ? "video" : "image" };
+          const permanentEntry = { url: publicUrl, name: file.name, type: isVideo ? "video" : "image", folderId: targetFolderId };
 
           // Swap blob placeholder with permanent URL in AppShell
           setPhotos(prev => prev.map(ph => ph._tmpId === tmpId ? permanentEntry : ph));
@@ -3935,7 +3987,10 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
     <div>
       {/* ── Toolbar ── */}
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18, flexWrap:"wrap" }}>
-        <p style={{ fontSize:13, color:C.muted, flex:1 }}>{photos.length} photo{photos.length!==1?"s":""}</p>
+        <p style={{ fontSize:13, color:C.muted, flex:1 }}>
+          {visibleCount} photo{visibleCount!==1?"s":""}
+          {activeFolderId === null && photos.length !== visibleCount ? "" : (folders.length > 0 ? ` · ${photos.length} total` : "")}
+        </p>
 
         {/* Thumb size */}
         <div style={{ display:"flex", gap:1, background:C.warm, borderRadius:9, padding:3, border:`1px solid ${C.border}` }}>
@@ -4031,9 +4086,84 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
         )}
 
         <label style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:"#fff", border:`1px dashed ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer", color:C.muted }}>
-          <Ic d={P.upload} size={13}/> {uploading ? "Uploading…" : "Upload Photos"}
+          <Ic d={P.upload} size={13}/> {uploading ? "Uploading…" : (activeFolderId && activeFolderId !== "_ungrouped" ? `Upload to "${folders.find(f=>f.id===activeFolderId)?.name || "folder"}"` : "Upload Photos")}
           <input id={`gallery-upload-${proj.id}`} type="file" multiple accept="image/*,video/*" style={{ display:"none" }} onChange={e => { addPhotos(e.target.files); e.target.value=""; }}/>
         </label>
+      </div>
+
+      {/* ── Folder bar ──────────────────────────────────────────────────
+          Photos can live in folders so multi-delivery projects (e.g.
+          "Engagement", "Wedding Day", "Reception") stay separated. Each
+          folder name is a tab; the active tab filters the photo grid
+          and tags new uploads with that folder. The client portal also
+          renders folders as a grid so the recipient picks which delivery
+          to view.                                                        */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, flexWrap:"wrap", padding:"10px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:11 }}>
+        <span style={{ fontSize:11, color:C.muted, fontWeight:600, textTransform:"uppercase", letterSpacing:.6, marginRight:4 }}>Folders</span>
+        {/* "All photos" pill */}
+        <button onClick={() => setActiveFolderId(null)}
+          style={{ padding:"6px 12px", borderRadius:99, border:`1.5px solid ${activeFolderId === null ? C.ink : C.border}`, background: activeFolderId === null ? C.ink : "#fff", color: activeFolderId === null ? "#fff" : C.ink, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+          All <span style={{ opacity:.65, marginLeft:4 }}>{photos.length}</span>
+        </button>
+        {/* Folder pills */}
+        {folders.map(f => {
+          const active = activeFolderId === f.id;
+          const editing = renamingFolderId === f.id;
+          if (editing) {
+            return (
+              <span key={f.id} style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 4px 2px 10px", background:"#fff", border:`1.5px solid ${C.ink}`, borderRadius:99 }}>
+                <input value={renameDraft} onChange={e => setRenameDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key==="Enter") commitRename(); if (e.key==="Escape") setRenamingFolderId(null); }}
+                  autoFocus
+                  style={{ width:120, padding:"4px 0", border:"none", outline:"none", fontSize:12, color:C.ink, fontFamily:"inherit" }}/>
+                <button onClick={commitRename} style={{ padding:"4px 8px", border:"none", background:C.ink, color:"#fff", borderRadius:99, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Save</button>
+              </span>
+            );
+          }
+          return (
+            <span key={f.id} style={{ display:"inline-flex", alignItems:"center" }}>
+              <button onClick={() => setActiveFolderId(f.id)}
+                onDoubleClick={() => { setRenamingFolderId(f.id); setRenameDraft(f.name); }}
+                title="Click to open · Double-click to rename"
+                style={{ padding:"6px 4px 6px 12px", borderRadius:"99px 0 0 99px", border:`1.5px solid ${active?C.ink:C.border}`, borderRight:"none", background: active?C.ink:"#fff", color:active?"#fff":C.ink, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                {f.name} <span style={{ opacity:.65, marginLeft:4 }}>{folderCounts[f.id] || 0}</span>
+              </button>
+              <button onClick={() => deleteFolder(f.id)} title="Delete folder"
+                style={{ padding:"6px 9px", borderRadius:"0 99px 99px 0", border:`1.5px solid ${active?C.ink:C.border}`, background: active?C.ink:"#fff", color:active?"#fff":C.muted, cursor:"pointer", fontSize:13, fontFamily:"inherit", lineHeight:1 }}>×</button>
+            </span>
+          );
+        })}
+        {/* Ungrouped pill — only show when there ARE ungrouped photos and folders exist */}
+        {folders.length > 0 && ungroupedCount > 0 && (
+          <button onClick={() => setActiveFolderId("_ungrouped")}
+            style={{ padding:"6px 12px", borderRadius:99, border:`1.5px dashed ${activeFolderId === "_ungrouped" ? C.ink : C.border}`, background: activeFolderId === "_ungrouped" ? C.ink : "transparent", color: activeFolderId === "_ungrouped" ? "#fff" : C.muted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+            Ungrouped <span style={{ opacity:.65, marginLeft:4 }}>{ungroupedCount}</span>
+          </button>
+        )}
+        {/* New folder */}
+        {showNewFolder ? (
+          <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 4px 2px 10px", background:"#fff", border:`1.5px solid ${C.ink}`, borderRadius:99 }}>
+            <input value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={e => { if (e.key==="Enter") createFolder(); if (e.key==="Escape") { setShowNewFolder(false); setNewFolderName(""); } }}
+              placeholder="Folder name"
+              autoFocus
+              style={{ width:140, padding:"4px 0", border:"none", outline:"none", fontSize:12, color:C.ink, fontFamily:"inherit" }}/>
+            <button onClick={createFolder}
+              style={{ padding:"4px 10px", border:"none", background:C.ink, color:"#fff", borderRadius:99, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+              Create
+            </button>
+            <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}
+              style={{ padding:"4px 6px", border:"none", background:"transparent", color:C.muted, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>×</button>
+          </span>
+        ) : (
+          <button onClick={() => setShowNewFolder(true)}
+            style={{ padding:"6px 12px", borderRadius:99, border:`1.5px dashed ${C.border}`, background:"transparent", color:C.muted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit", marginLeft:"auto" }}>
+            + New folder
+          </button>
+        )}
+        {folders.length === 0 && (
+          <span style={{ fontSize:11, color:C.muted, fontStyle:"italic", marginLeft:8 }}>Group multi-delivery shoots into separate folders.</span>
+        )}
       </div>
 
       {/* ── Upload Drop Zone (empty state) ── */}
@@ -4136,6 +4266,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {photos.length > 0 && layoutMode === "grid" && (
         <div style={{ display:"grid", gridTemplateColumns:`repeat(${cols},1fr)`, gap:2 }}>
           {photos.map((photo,i) => {
+            if (!matchesActiveFolder(photo)) return null;
             const isSel = selectedPhotoIdxs.includes(i);
             return (
               <div key={i} onClick={() => photoSelectMode ? setSelectedPhotoIdxs(prev => isSel ? prev.filter(x=>x!==i) : [...prev,i]) : setLightbox(i)}
@@ -4166,6 +4297,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
       {photos.length > 0 && layoutMode === "masonry" && (
         <div style={{ columns:cols, columnGap:2 }}>
           {photos.map((photo,i) => {
+            if (!matchesActiveFolder(photo)) return null;
             const isSel = selectedPhotoIdxs.includes(i);
             return (
               <div key={i} onClick={() => photoSelectMode ? setSelectedPhotoIdxs(prev => isSel ? prev.filter(x=>x!==i) : [...prev,i]) : setLightbox(i)}
@@ -4214,6 +4346,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
             </div>
             <div style={{ display:"flex", gap:2, marginTop:2, overflowX:"auto" }}>
               {photos.map((photo,i) => {
+                if (!matchesActiveFolder(photo)) return null;
                 const tw = { S:44, M:70, L:100 }[thumbSize] || 70;
                 return (
                   <div key={i} onClick={() => setLightbox(i)}
@@ -4345,7 +4478,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
               {/* Gallery based on style */}
               {portalStyle === "grid" && (
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6 }}>
-                  {photos.map((photo,i) => (
+                  {photos.map((photo,i) => matchesActiveFolder(photo) ? (
                     <div key={i} style={{ borderRadius:8, overflow:"hidden", cursor:"pointer", transition:"opacity .15s" }}
                       onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                       {imgSrc(photo)
@@ -4353,12 +4486,12 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
                         : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
                       }
                     </div>
-                  ))}
+                  ) : null)}
                 </div>
               )}
               {portalStyle === "masonry" && (
                 <div style={{ columns:3, columnGap:6 }}>
-                  {photos.map((photo,i) => (
+                  {photos.map((photo,i) => matchesActiveFolder(photo) ? (
                     <div key={i} style={{ breakInside:"avoid", marginBottom:6, borderRadius:10, overflow:"hidden", cursor:"pointer", transition:"opacity .15s" }}
                       onMouseEnter={e=>e.currentTarget.style.opacity=".8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                       {imgSrc(photo)
@@ -4366,7 +4499,7 @@ const ProjectGalleryTab = ({ proj, projInvoices, galleryDelivery, setGalleryDeli
                         : <div style={{ width:"100%", aspectRatio:"4/3", background:bgFallback(photo) }}/>
                       }
                     </div>
-                  ))}
+                  ) : null)}
                 </div>
               )}
               {portalStyle === "slideshow" && (() => {
@@ -5015,7 +5148,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
   // Derive the photographer's real display name from their account
   const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
@@ -6885,7 +7018,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         })()}
 
         {/* ── GALLERY ── */}
-        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))} onPermanentSave={persistGalleryNow}/>}
+        {tab === "gallery" && <ProjectGalleryTab proj={proj} projInvoices={projInvoices} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} galleryPhotosProp={galleryPhotos?.[proj.id] || []} setGalleryPhotosProp={(updatedPhotos) => setGalleryPhotos && setGalleryPhotos(prev => ({ ...prev, [proj.id]: typeof updatedPhotos === "function" ? updatedPhotos(prev[proj.id] || []) : updatedPhotos }))} onPermanentSave={persistGalleryNow} foldersForProj={(galleryFolders && galleryFolders[proj.id]) || []} setFoldersForProj={(updater) => setGalleryFolders && setGalleryFolders(prev => ({ ...prev, [proj.id]: typeof updater === "function" ? updater(prev[proj.id] || []) : updater }))}/>}
         {/* ── PLANNING ── */}
         {tab === "planning" && <ProjectPlanningTab proj={proj}/>}
 
@@ -25974,7 +26107,8 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [appPackages,    setAppPackages]    = useState(INITIAL_SERVICE_PACKAGES);
   const [appSbFrames,    setAppSbFrames]    = useState([]);
   const [appSbMedia,     setAppSbMedia]     = useState([]);
-  const [galleryPhotos,        setGalleryPhotos]        = useState({}); // { [projId]: [{url,name}] }
+  const [galleryPhotos,        setGalleryPhotos]        = useState({}); // { [projId]: [{url,name,folderId?}] }
+  const [galleryFolders,       setGalleryFolders]       = useState({}); // { [projId]: [{id,name,createdAt,cover?}] }
   const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
   const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
 
@@ -26012,6 +26146,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.sb_frames    && data.sb_frames.length)    setAppSbFrames(data.sb_frames);
         if (data.sb_media     && data.sb_media.length)     setAppSbMedia(data.sb_media);
         if (data.gallery_photos && Object.keys(data.gallery_photos).length) setGalleryPhotos(data.gallery_photos);
+        if (data.gallery_folders && Object.keys(data.gallery_folders).length) setGalleryFolders(data.gallery_folders);
         if (data.gallery_delivery && Object.keys(data.gallery_delivery).length) setGalleryDelivery(data.gallery_delivery);
         if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
         if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
@@ -26060,6 +26195,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     sb_frames:   appSbFrames,
     sb_media:    appSbMedia,
     gallery_photos:     galleryPhotos,
+    gallery_folders:    galleryFolders,
     gallery_delivery:   galleryDelivery,
     video_deliverables: appVideoDeliverables,
     video_comments:     appVideoComments,
@@ -26116,7 +26252,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
   }, [
     brandKit, appProjects, appInvoices, crmClients, bookings, calEvents,
     appProposals, appPackages, appSbFrames, appSbMedia,
-    galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments,
+    galleryPhotos, galleryFolders, galleryDelivery, appVideoDeliverables, appVideoComments,
     // Newly persisted slices (via extras column):
     availability, appThreads, teamMembers, projectTeam, emailTemplates,
     formRules, sentForms, clientFavorites, clientFlags, clientDmMessages,
@@ -26170,7 +26306,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
