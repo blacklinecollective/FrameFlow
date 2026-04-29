@@ -4746,6 +4746,54 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
   const [emailing,setEmailing]= useState(false);
   const [emailSent,setEmailSent]=useState(false);
 
+  // ── Safety re-prefill ──────────────────────────────────────────────
+  // useState(() => buildPrefill()) only runs ONCE on mount. If the
+  // proj.contacts array, the brand kit, or the CRM list weren't fully
+  // hydrated from the DB at that moment, the client/bill-to fields end
+  // up empty. This effect re-runs the prefill whenever any of those
+  // inputs change — but ONLY for fields the user hasn't manually filled
+  // in yet. Tracked via a signature ref so we don't loop.
+  const prefillSig = useRef("");
+  useEffect(() => {
+    const sig =
+      `${proj?.id || ""}|${proj?.client || ""}|` +
+      `${(proj?.contacts || []).length}|` +
+      `${(proj?.contacts || []).map(c => `${c?.name || ""}:${c?.email || ""}:${c?.phone || ""}:${c?.address?.line1 || ""}`).join(",")}|` +
+      `${(crmClients || []).length}|` +
+      `${brandKit?.studioName || ""}|${brandKit?.studioPhone || ""}|${brandKit?.studioWebsite || ""}|` +
+      `${brandKit?.studioAddress?.line1 || ""}|${brandKit?.studioAddress?.city || ""}|${brandKit?.studioAddress?.state || ""}|${brandKit?.studioAddress?.zip || ""}`;
+    if (sig === prefillSig.current) return;
+    prefillSig.current = sig;
+    setForm(prev => {
+      const fresh = buildPrefill();
+      // Only overwrite empty fields — never blow away anything the
+      // photographer has typed manually.
+      const next = { ...prev };
+      const keys = [
+        "bizName","yourName","bizEmail","bizPhone","bizWeb",
+        "bizAddr","bizCity","bizState","bizZip",
+        "clientName","clientEmail","clientPhone",
+        "clientAddr","clientCity","clientState","clientZip",
+        "projectDesc",
+      ];
+      for (const k of keys) {
+        if (!next[k] && fresh[k]) next[k] = fresh[k];
+      }
+      return next;
+    });
+  }, [
+    proj?.id,
+    proj?.client,
+    proj?.contacts,
+    proj?.name,
+    crmClients,
+    brandKit?.studioName,
+    brandKit?.studioPhone,
+    brandKit?.studioWebsite,
+    brandKit?.studioAddress,
+    supabaseSession?.user?.email,
+  ]);
+
   const F = (k,v) => setForm(f => ({...f,[k]:v}));
   const stTax = STATE_TAX[form.taxState] || {rate:0,note:""};
 
