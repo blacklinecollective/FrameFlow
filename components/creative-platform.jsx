@@ -4983,7 +4983,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices }) => {
 };
 
 
-const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession }) => {
+const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses }) => {
   // Derive the photographer's real display name from their account
   const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
@@ -5042,18 +5042,8 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
   const [newContact, setNewContact] = useState(blankContact);
   const [editingContact, setEditingContact] = useState(null); // contact object being edited
-  const [projChecklists, setProjChecklists] = useState({});
-  const [projTimeLogs, setProjTimeLogs] = useState({
-    1: [
-      { id:1, date:"Apr 2, 2026",  hours:1.5, cat:"admin",   desc:"Client consult + contract prep" },
-      { id:2, date:"Apr 8, 2026",  hours:2.0, cat:"prep",    desc:"Venue scout & timeline review" },
-      { id:3, date:"Apr 14, 2026", hours:9.0, cat:"shoot",   desc:"Wedding day coverage" },
-    ],
-    4: [
-      { id:1, date:"Mar 15, 2026", hours:1.0, cat:"admin",   desc:"Pre-production call with client" },
-      { id:2, date:"Mar 18, 2026", hours:3.0, cat:"shoot",   desc:"Location scout + test shots" },
-    ],
-  });
+  // projChecklists / projTimeLogs are now lifted to AppShell (see top-level state).
+  // They are received as props so they survive logout/login and tab navigation.
   const [ckInput,   setCkInput]   = useState("");
   const [ckCat,     setCkCat]     = useState("prep");
   const [tlDate,    setTlDate]    = useState("");
@@ -5066,7 +5056,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
   const [notifyOnComplete, setNotifyOnComplete] = useState(true);
   const [viewingContract,  setViewingContract]  = useState(null); // contract object being viewed
   const [projOverrides,    setProjOverrides]    = useState({});   // editable project fields keyed by id
-  const [projExpenses,     setProjExpenses]     = useState(PROJECT_EXPENSES_SEED);
+  // projExpenses is now lifted to AppShell and received via props (persists across logout).
   const [showEditModal,    setShowEditModal]    = useState(false);
   const [editForm,         setEditForm]         = useState({});
 
@@ -25658,6 +25648,21 @@ function AppShell({ supabaseSession, supabaseClient }) {
   const [appVideoDeliverables, setAppVideoDeliverables] = useState({}); // { [projId]: [...deliverables] }
   const [appVideoComments,     setAppVideoComments]     = useState({}); // { [versionId]: [...comments] }
 
+  // ── Lifted from Projects so they survive logout / login ────────────────
+  const [projChecklists, setProjChecklists] = useState({});
+  const [projTimeLogs,   setProjTimeLogs]   = useState({
+    1: [
+      { id:1, date:"Apr 2, 2026",  hours:1.5, cat:"admin",   desc:"Client consult + contract prep" },
+      { id:2, date:"Apr 8, 2026",  hours:2.0, cat:"prep",    desc:"Venue scout & timeline review" },
+      { id:3, date:"Apr 14, 2026", hours:9.0, cat:"shoot",   desc:"Wedding day coverage" },
+    ],
+    4: [
+      { id:1, date:"Mar 15, 2026", hours:1.0, cat:"admin",   desc:"Pre-production call with client" },
+      { id:2, date:"Mar 18, 2026", hours:3.0, cat:"shoot",   desc:"Location scout + test shots" },
+    ],
+  });
+  const [projExpenses,   setProjExpenses]   = useState(PROJECT_EXPENSES_SEED);
+
   const userId = supabaseSession?.user?.id;
   const [dbLoaded, setDbLoaded] = useState(false);
 
@@ -25680,6 +25685,31 @@ function AppShell({ supabaseSession, supabaseClient }) {
         if (data.gallery_delivery && Object.keys(data.gallery_delivery).length) setGalleryDelivery(data.gallery_delivery);
         if (data.video_deliverables && Object.keys(data.video_deliverables).length) setAppVideoDeliverables(data.video_deliverables);
         if (data.video_comments && Object.keys(data.video_comments).length) setAppVideoComments(data.video_comments);
+        // Hydrate everything bundled in the `extras` JSONB column.
+        // Each slice is restored only when present so we don't clobber defaults.
+        if (data.extras && typeof data.extras === "object") {
+          const e = data.extras;
+          if (e.availability)       setAvailability(e.availability);
+          if (e.appThreads)         setAppThreads(e.appThreads);
+          if (e.teamMembers)        setTeamMembers(e.teamMembers);
+          if (e.projectTeam)        setProjectTeam(e.projectTeam);
+          if (e.emailTemplates)     setEmailTemplates(e.emailTemplates);
+          if (e.formRules)          setFormRules(e.formRules);
+          if (e.sentForms)          setSentForms(e.sentForms);
+          if (e.clientFavorites)    setClientFavorites(e.clientFavorites);
+          if (e.clientFlags)        setClientFlags(e.clientFlags);
+          if (e.clientDmMessages)   setClientDmMessages(e.clientDmMessages);
+          if (e.loyaltyConfig)      setLoyaltyConfig(e.loyaltyConfig);
+          if (e.notifications)      setNotifications(e.notifications);
+          if (e.commNotifs)         setCommNotifs(e.commNotifs);
+          if (e.tmTimesheets)       setTmTimesheets(e.tmTimesheets);
+          if (e.tmAvailability)     setTmAvailability(e.tmAvailability);
+          if (e.tmDmMessages)       setTmDmMessages(e.tmDmMessages);
+          if (e.tmFileSubmissions)  setTmFileSubmissions(e.tmFileSubmissions);
+          if (e.projChecklists)     setProjChecklists(e.projChecklists);
+          if (e.projTimeLogs)       setProjTimeLogs(e.projTimeLogs);
+          if (e.projExpenses)       setProjExpenses(e.projExpenses);
+        }
       }
       setDbLoaded(true);
     });
@@ -25703,6 +25733,30 @@ function AppShell({ supabaseSession, supabaseClient }) {
     gallery_delivery:   galleryDelivery,
     video_deliverables: appVideoDeliverables,
     video_comments:     appVideoComments,
+    // Everything below was previously lost on logout. Bundled into one
+    // `extras` JSONB column so we don't have to migrate the schema for each.
+    extras: {
+      availability,
+      appThreads,
+      teamMembers,
+      projectTeam,
+      emailTemplates,
+      formRules,
+      sentForms,
+      clientFavorites,
+      clientFlags,
+      clientDmMessages,
+      loyaltyConfig,
+      notifications,
+      commNotifs,
+      tmTimesheets,
+      tmAvailability,
+      tmDmMessages,
+      tmFileSubmissions,
+      projChecklists,
+      projTimeLogs,
+      projExpenses,
+    },
   };
 
   // Immediate (non-debounced) save — used by logout handler
@@ -25729,7 +25783,18 @@ function AppShell({ supabaseSession, supabaseClient }) {
   useEffect(() => {
     if (!dbLoaded || !userId) return;
     saveState(userId, _liveState.current);
-  }, [brandKit, appProjects, appInvoices, crmClients, bookings, calEvents, appProposals, appPackages, appSbFrames, appSbMedia, galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments, dbLoaded]);
+  }, [
+    brandKit, appProjects, appInvoices, crmClients, bookings, calEvents,
+    appProposals, appPackages, appSbFrames, appSbMedia,
+    galleryPhotos, galleryDelivery, appVideoDeliverables, appVideoComments,
+    // Newly persisted slices (via extras column):
+    availability, appThreads, teamMembers, projectTeam, emailTemplates,
+    formRules, sentForms, clientFavorites, clientFlags, clientDmMessages,
+    loyaltyConfig, notifications, commNotifs,
+    tmTimesheets, tmAvailability, tmDmMessages, tmFileSubmissions,
+    projChecklists, projTimeLogs, projExpenses,
+    dbLoaded,
+  ]);
 
   useEffect(() => {
     const onResize = () => setWinW(window.innerWidth);
@@ -25775,7 +25840,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession}/>,
+    projects:  <Projects deepLink={projDeepLink} clearDeepLink={()=>setProjDeepLink(null)} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
