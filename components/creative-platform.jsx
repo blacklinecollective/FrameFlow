@@ -4700,30 +4700,41 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
       base.bizState = a.state || base.bizState;
       base.bizZip   = a.zip || "";
     }
-    // ── Client side (the "Bill to") — match the project's primary client
-    //   (proj.client) against the CRM list, and fall back to whichever
-    //   project contact is marked as a client.
-    const clientNameFromProj = proj?.client || "";
+    // ── Client side (the "Bill to") ────────────────────────────────────
+    //   Resolution order — pick the best source available:
+    //   (1) project contact whose name == proj.client (exact match)
+    //   (2) project contact whose name contains proj.client (prefix/suffix)
+    //   (3) first project contact with type === "client"
+    //   (4) first project contact at all
+    //   Then layer a CRM record (matched by name) on top so any field the
+    //   contact didn't have can come from CRM.
+    const clientNameFromProj = (proj?.client || "").trim();
+    const lowerProjClient = clientNameFromProj.toLowerCase();
+    const contacts = proj?.contacts || [];
+    const projContact =
+      contacts.find(c => c?.name && c.name.toLowerCase() === lowerProjClient) ||
+      contacts.find(c => c?.name && lowerProjClient && c.name.toLowerCase().includes(lowerProjClient)) ||
+      contacts.find(c => c?.type === "client") ||
+      contacts[0] ||
+      null;
     const matchedCrm = (crmClients || []).find(c =>
-      c?.name && clientNameFromProj && c.name.toLowerCase() === clientNameFromProj.toLowerCase()
-    );
-    const projContactClient = (proj?.contacts || []).find(c => c?.type === "client");
-    const src = matchedCrm || projContactClient || null;
-    base.clientName = clientNameFromProj || src?.name || "";
-    if (src?.email)    base.clientEmail = src.email;
-    if (src?.phone)    base.clientPhone = src.phone;
-    if (src?.location) {
-      // Free-form "City, State" location string from CRM record.
-      base.clientCity = src.location;
-    }
-    // Project contact profile (we added structured address there earlier)
-    if (projContactClient?.address) {
-      const a = projContactClient.address;
-      base.clientAddr  = a.line1 || base.clientAddr;
-      base.clientCity  = a.city  || base.clientCity;
-      base.clientState = a.state || base.clientState;
-      base.clientZip   = a.zip   || base.clientZip;
-    }
+      c?.name && clientNameFromProj && c.name.toLowerCase() === lowerProjClient
+    ) || (projContact && (crmClients || []).find(c =>
+      c?.name && c.name.toLowerCase() === projContact.name.toLowerCase()
+    ));
+
+    base.clientName = clientNameFromProj || projContact?.name || matchedCrm?.name || "";
+    // Email / phone — prefer the contact (they're the primary record on the
+    // project), fall back to CRM record.
+    base.clientEmail = projContact?.email || matchedCrm?.email || "";
+    base.clientPhone = projContact?.phone || matchedCrm?.phone || "";
+    // Structured address from contact.profile (filled via Add/Edit Contact
+    // form OR the client's portal Profile tab).
+    const a = projContact?.address || {};
+    base.clientAddr  = a.line1 || "";
+    base.clientCity  = a.city  || matchedCrm?.location || "";
+    base.clientState = a.state || base.clientState;
+    base.clientZip   = a.zip   || "";
     if (proj?.name) base.projectDesc = proj.name;
     return base;
   };
@@ -6160,20 +6171,20 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
                     <input placeholder="Address line 1" value={editingContact.address?.line1 || ""}
                       onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), line1: e.target.value}}))}
-                      style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                      style={{ gridColumn:"1 / -1", width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                     <input placeholder="Apt, suite, etc. (optional)" value={editingContact.address?.line2 || ""}
                       onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), line2: e.target.value}}))}
-                      style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                      style={{ gridColumn:"1 / -1", width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                     <input placeholder="City" value={editingContact.address?.city || ""}
                       onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), city: e.target.value}}))}
-                      style={{ padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
-                    <div style={{ display:"flex", gap:8 }}>
+                      style={{ width:"100%", minWidth:0, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    <div style={{ display:"flex", gap:8, minWidth:0 }}>
                       <input placeholder="State" value={editingContact.address?.state || ""}
                         onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), state: e.target.value}}))}
-                        style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                        style={{ flex:1, minWidth:0, width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                       <input placeholder="ZIP" value={editingContact.address?.zip || ""}
                         onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), zip: e.target.value}}))}
-                        style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                        style={{ flex:1, minWidth:0, width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                     </div>
                   </div>
                   <div style={{ marginBottom:18 }}>
@@ -6237,20 +6248,20 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
                   <input placeholder="Address line 1" value={newContact.address?.line1 || ""}
                     onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), line1: e.target.value}}))}
-                    style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    style={{ gridColumn:"1 / -1", width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                   <input placeholder="Apt, suite, etc. (optional)" value={newContact.address?.line2 || ""}
                     onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), line2: e.target.value}}))}
-                    style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    style={{ gridColumn:"1 / -1", width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                   <input placeholder="City" value={newContact.address?.city || ""}
                     onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), city: e.target.value}}))}
-                    style={{ padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
-                  <div style={{ display:"flex", gap:8 }}>
+                    style={{ width:"100%", minWidth:0, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                  <div style={{ display:"flex", gap:8, minWidth:0 }}>
                     <input placeholder="State" value={newContact.address?.state || ""}
                       onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), state: e.target.value}}))}
-                      style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                      style={{ flex:1, minWidth:0, width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                     <input placeholder="ZIP" value={newContact.address?.zip || ""}
                       onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), zip: e.target.value}}))}
-                      style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                      style={{ flex:1, minWidth:0, width:"100%", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:8, alignItems:"center" }}>
