@@ -25574,6 +25574,64 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
   );
 };
 
+// ── Client Portal Preview ─────────────────────────────────────
+// Embeds the public /client/[projectId] route in an iframe so the photographer
+// sees EXACTLY what the client sees at the shared link. Before mounting we flush
+// any pending in-memory writes via saveNow() so the iframe loads the freshest
+// data from app_state.
+function ClientPortalPreview({ projId, onBack, saveNow }) {
+  const [iframeKey, setIframeKey] = useState(0);
+  const [ready,     setReady]     = useState(false);
+  // Flush pending saves before the iframe loads the data via RPC.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { if (saveNow) await saveNow(); } catch(_) {}
+      if (!cancelled) setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [projId, iframeKey, saveNow]);
+  const src = `/client/${projId}`;
+  const fullUrl = (typeof window !== "undefined" ? window.location.origin : "") + src;
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", background:"#0e1a15" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 18px",
+        background:"#0e1a15", color:"#f5f2ee", borderBottom:"1px solid rgba(255,255,255,0.1)", flexWrap:"wrap" }}>
+        <button onClick={onBack}
+          style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
+            padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11 }}>← Back</button>
+        <div style={{ display:"flex", flexDirection:"column", lineHeight:1.2 }}>
+          <span style={{ fontSize:13, fontWeight:600 }}>Client Portal Preview</span>
+          <span style={{ fontSize:10, color:"rgba(245,242,238,.55)" }}>This is exactly what your client sees at the shared link</span>
+        </div>
+        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+          <code style={{ fontSize:11, color:"rgba(245,242,238,.55)", padding:"4px 10px", background:"rgba(255,255,255,.06)", borderRadius:6, fontFamily:"ui-monospace, monospace" }}>{src}</code>
+          <button onClick={() => { try { navigator.clipboard.writeText(fullUrl); } catch(_) {} }}
+            title="Copy shareable link"
+            style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
+              padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>Copy link</button>
+          <button onClick={() => { setReady(false); setIframeKey(k => k + 1); }}
+            title="Refresh preview"
+            style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
+              padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>↻ Refresh</button>
+        </div>
+      </div>
+      {ready ? (
+        <iframe
+          key={iframeKey}
+          src={src}
+          title="Client Portal Preview"
+          style={{ flex:1, width:"100%", minHeight:"calc(100vh - 50px)", border:"none", background:"#fff" }}
+        />
+      ) : (
+        <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(245,242,238,.5)", fontSize:13 }}>
+          Saving latest changes…
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── App Shell ─────────────────────────────────────────────────
 export default function App() {
   const [session, setSession] = useState(null);
@@ -25856,7 +25914,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortal projId={portalProjId} onBack={() => setPage("projects")} brandKit={brandKit} availability={availability} bookings={bookings} onBook={bk => setBookings(p=>[...p,bk])} galleryDelivery={galleryDelivery} clientFavorites={clientFavorites} setClientFavorites={setClientFavorites} clientFlags={clientFlags} setClientFlags={setClientFlags} appProjects={appProjects} galleryPhotos={galleryPhotos} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} supabaseSession={supabaseSession}/>,
+    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
