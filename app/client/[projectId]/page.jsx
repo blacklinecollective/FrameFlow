@@ -1076,7 +1076,13 @@ export default function ClientPortalPage({ params }) {
           everything from data already loaded by the RPC — no extra
           network calls.                                                  */}
       {tab === "home" && (() => {
-        const firstName  = (identity?.name || project?.client || "there").split(" ")[0];
+        // Photographer can customize greeting + welcome via the Edit Home
+        // popover in the preview header (saved on galleryDelivery[projId]).
+        // Empty/missing fields fall back to the auto time-based defaults.
+        const customGreeting    = (delivery.homeGreeting || "").trim();
+        const customWelcome     = (delivery.homeWelcomeMessage || "").trim();
+        const customClientName  = (delivery.homeClientName || "").trim();
+        const firstName  = (customClientName || identity?.name || project?.client || "there").split(" ")[0];
         const photoCount = photos.length;
         const videoCount = videoDeliverables.length;
         const checklistTotal = (project?.checklist || []).length;
@@ -1125,10 +1131,12 @@ export default function ClientPortalPage({ params }) {
               <div style={{ flex:1, minWidth:240 }}>
                 <p style={{ fontSize:12, color:sub, textTransform:"uppercase", letterSpacing:2, margin:"0 0 6px", fontWeight:600 }}>{project?.type || "Your project"}</p>
                 <h1 style={{ fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:500, color:fg, margin:"0 0 6px", lineHeight:1.1 }}>
-                  {greeting} {firstName}.
+                  {customGreeting || `${greeting} ${firstName}.`}
                 </h1>
-                <p style={{ fontSize:14, color:sub, margin:"0 0 16px", lineHeight:1.6, maxWidth:520 }}>
-                  Welcome to the portal for <strong style={{ color:fg }}>{project?.name || "your project"}</strong> with {studioName}. Everything you need lives here — pictures, videos, invoices, messages, and the latest project updates.
+                <p style={{ fontSize:14, color:sub, margin:"0 0 16px", lineHeight:1.6, maxWidth:520, whiteSpace:"pre-wrap" }}>
+                  {customWelcome || (
+                    <>Welcome to the portal for <strong style={{ color:fg }}>{project?.name || "your project"}</strong> with {studioName}. Everything you need lives here — pictures, videos, invoices, messages, and the latest project updates.</>
+                  )}
                 </p>
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                   {photoCount > 0 && (

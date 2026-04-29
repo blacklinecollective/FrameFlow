@@ -26284,12 +26284,51 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
 // sees EXACTLY what the client sees at the shared link. Before mounting we flush
 // any pending in-memory writes via saveNow() so the iframe loads the freshest
 // data from app_state.
-function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, onSelectProject }) {
+function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, onSelectProject, galleryDelivery, setGalleryDelivery }) {
   const [iframeKey, setIframeKey] = useState(0);
   const [ready,     setReady]     = useState(false);
   const [justCopied, setJustCopied] = useState(false);
+  const [showHomeEdit, setShowHomeEdit] = useState(false);
   const projectList = Array.isArray(projects) ? projects : [];
   const currentProj = projectList.find(p => p.id === projId);
+  // Editable Home-page customization lives on galleryDelivery[projId].
+  // The public portal Home tab reads these and falls back to defaults.
+  const projDelivery = (galleryDelivery && galleryDelivery[projId]) || {};
+  const [homeForm, setHomeForm] = useState({
+    homeGreeting:       projDelivery.homeGreeting       || "",
+    homeWelcomeMessage: projDelivery.homeWelcomeMessage || "",
+    homeClientName:     projDelivery.homeClientName     || "",
+  });
+  // When the photographer flips to a different project, reset the form to that
+  // project's saved values so they're not editing stale state.
+  useEffect(() => {
+    setHomeForm({
+      homeGreeting:       projDelivery.homeGreeting       || "",
+      homeWelcomeMessage: projDelivery.homeWelcomeMessage || "",
+      homeClientName:     projDelivery.homeClientName     || "",
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projId]);
+  const saveHomeEdits = async () => {
+    if (!setGalleryDelivery) return;
+    setGalleryDelivery(prev => ({
+      ...(prev || {}),
+      [projId]: {
+        ...((prev || {})[projId] || {}),
+        homeGreeting:       homeForm.homeGreeting.trim(),
+        homeWelcomeMessage: homeForm.homeWelcomeMessage.trim(),
+        homeClientName:     homeForm.homeClientName.trim(),
+      },
+    }));
+    setShowHomeEdit(false);
+    // Flush + reload the iframe so the new values render immediately.
+    if (saveNow) { try { await saveNow(); } catch(_) {} }
+    setReady(false);
+    setIframeKey(k => k + 1);
+  };
+  const resetHomeEdits = () => {
+    setHomeForm({ homeGreeting:"", homeWelcomeMessage:"", homeClientName:"" });
+  };
   // Flush pending saves before the iframe loads the data via RPC.
   useEffect(() => {
     let cancelled = false;
@@ -26348,12 +26387,68 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
               padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11, transition:"all .15s", minWidth:78 }}>
             {justCopied ? "✓ Copied!" : "Copy link"}
           </button>
+          <button onClick={() => setShowHomeEdit(s => !s)}
+            title="Customize the Home page greeting + welcome message"
+            style={{ background: showHomeEdit ? "rgba(196,151,74,.25)" : "none", border:`1px solid ${showHomeEdit?"rgba(196,151,74,.6)":"rgba(255,255,255,.2)"}`, color:"#f5f2ee",
+              padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>✎ Edit Home</button>
           <button onClick={() => { setReady(false); setIframeKey(k => k + 1); }}
             title="Refresh preview"
             style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
               padding:"5px 10px", borderRadius:7, cursor:"pointer", fontSize:11 }}>↻ Refresh</button>
         </div>
       </div>
+
+      {/* ── Edit Home popover ──────────────────────────────────────────
+          Toggleable strip below the preview header. Lets the photographer
+          customize the greeting line and welcome description shown on the
+          public portal's Home tab. Empty fields fall back to the auto
+          time-of-day greeting + default copy.                            */}
+      {showHomeEdit && (
+        <div style={{ background:"#fafaf8", borderBottom:`1px solid rgba(0,0,0,.08)`, padding:"14px 22px", display:"flex", flexDirection:"column", gap:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+            <p style={{ fontSize:12, fontWeight:700, color:"#1a1a1a", margin:0 }}>Customize the Home page</p>
+            <span style={{ fontSize:11, color:"#888" }}>Leave any field blank to use the auto greeting / default copy.</span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <label style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <span style={{ fontSize:10, fontWeight:600, color:"#888", textTransform:"uppercase", letterSpacing:.6 }}>Greeting line</span>
+              <input value={homeForm.homeGreeting}
+                onChange={e => setHomeForm(f => ({...f, homeGreeting: e.target.value}))}
+                placeholder='e.g. "Welcome back, Mike!"'
+                style={{ padding:"9px 12px", border:"1px solid #e8e4df", borderRadius:8, fontSize:13, color:"#1a1a1a", outline:"none", fontFamily:"inherit", background:"#fff" }}/>
+            </label>
+            <label style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <span style={{ fontSize:10, fontWeight:600, color:"#888", textTransform:"uppercase", letterSpacing:.6 }}>Client name shown (optional)</span>
+              <input value={homeForm.homeClientName}
+                onChange={e => setHomeForm(f => ({...f, homeClientName: e.target.value}))}
+                placeholder='e.g. "Mike & Kelly"'
+                style={{ padding:"9px 12px", border:"1px solid #e8e4df", borderRadius:8, fontSize:13, color:"#1a1a1a", outline:"none", fontFamily:"inherit", background:"#fff" }}/>
+            </label>
+          </div>
+          <label style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            <span style={{ fontSize:10, fontWeight:600, color:"#888", textTransform:"uppercase", letterSpacing:.6 }}>Welcome message</span>
+            <textarea value={homeForm.homeWelcomeMessage}
+              onChange={e => setHomeForm(f => ({...f, homeWelcomeMessage: e.target.value}))}
+              placeholder='e.g. "So glad to share these with you. Take your time browsing — favorites are saved as you click them."'
+              rows={3}
+              style={{ padding:"9px 12px", border:"1px solid #e8e4df", borderRadius:8, fontSize:13, color:"#1a1a1a", outline:"none", fontFamily:"inherit", background:"#fff", resize:"vertical", lineHeight:1.5 }}/>
+          </label>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", alignItems:"center", marginTop:2 }}>
+            <button onClick={resetHomeEdits}
+              style={{ padding:"7px 12px", background:"transparent", color:"#888", border:"1px solid #e8e4df", borderRadius:8, fontSize:11, fontWeight:500, cursor:"pointer", fontFamily:"inherit" }}>
+              Reset
+            </button>
+            <button onClick={() => setShowHomeEdit(false)}
+              style={{ padding:"7px 12px", background:"transparent", color:"#1a1a1a", border:"1px solid #e8e4df", borderRadius:8, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+              Cancel
+            </button>
+            <button onClick={saveHomeEdits}
+              style={{ padding:"7px 16px", background:"#1a1a1a", color:"#fff", border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+              Save & refresh
+            </button>
+          </div>
+        </div>
+      )}
       {ready ? (
         <iframe
           key={iframeKey}
@@ -26706,7 +26801,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id} projects={appProjects} onSelectProject={(pid) => setPortalProjId(pid)}/>,
+    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id} projects={appProjects} onSelectProject={(pid) => setPortalProjId(pid)} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
