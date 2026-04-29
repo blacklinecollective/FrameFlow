@@ -6829,6 +6829,9 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
           const setChecklistItemDate = (id, due) => {
             updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, due} : c));
           };
+          const setChecklistItemNote = (id, note) => {
+            updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, note} : c));
+          };
           const updateChecklistItemText = (id, text) => {
             updateChecklist(proj.id, prev => prev.map(c => c.id === id ? {...c, text} : c));
           };
@@ -6950,6 +6953,22 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                             </div>
                           );
                         })()}
+                        {/* Note for client row — auto-saves on blur. Visible to the client on their Progress tab. */}
+                        <div style={{ display:"flex", alignItems:"flex-start", gap:6, padding:"5px 12px 9px 44px", borderTop:`1px solid ${item.checked?"#c3d9c3":C.border}` }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop:3, flexShrink:0 }}>
+                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                          </svg>
+                          <textarea
+                            defaultValue={item.note || ""}
+                            onBlur={e => {
+                              const v = e.target.value.trim();
+                              if (v !== (item.note || "").trim()) setChecklistItemNote(item.id, v);
+                            }}
+                            placeholder="Add a note for the client (e.g. 'pick your top 30 favourites by Friday')…"
+                            rows={1}
+                            style={{ flex:1, fontSize:11, color:item.note?C.ink:"#999", background:"transparent", border:"none", outline:"none", padding:"2px 0", lineHeight:1.5, resize:"vertical", fontFamily:"inherit", minHeight:18 }}
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>

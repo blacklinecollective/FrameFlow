@@ -1171,6 +1171,17 @@ export default function ClientPortalPage({ params }) {
                             {dueLabel}
                           </p>
                         )}
+                        {item.note && item.note.trim() && (
+                          <div style={{ marginTop:8, padding:"8px 11px", background:dark?"rgba(255,255,255,.05)":"#f7f5f1", border:`1px solid ${brd}`, borderLeft:`3px solid ${brandColor}`, borderRadius:6, display:"flex", alignItems:"flex-start", gap:7 }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop:2, flexShrink:0 }}>
+                              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                            </svg>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <p style={{ fontSize:10, color:sub, fontWeight:600, textTransform:"uppercase", letterSpacing:.6, margin:"0 0 3px" }}>Note from {studioName}</p>
+                              <p style={{ fontSize:12, color:fg, margin:0, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{item.note}</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       {item.checked && <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Done</span>}
                     </div>
