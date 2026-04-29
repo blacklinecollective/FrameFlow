@@ -5264,8 +5264,12 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
     const activeThread   = activeThreadId ? (threadMap[activeThreadId] || null) : null;
     const curProjMessages = activeThread?.messages || [];
 
+    // ── Photographer sends into the shared project chat (single "default" thread) ──
+    // Every participant — photographer + each contact via their per-contact link —
+    // posts into one canonical conversation. Older multi-thread data still shows
+    // up in the merged display below; new messages always land here.
     const sendMsg = async () => {
-      if (!msgDraft.trim() || !activeThreadId) return;
+      if (!msgDraft.trim()) return;
       const msg = {
         id:         "msg_" + Date.now(),
         from:       "studio",
@@ -5273,10 +5277,10 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
         text:       msgDraft.trim(),
         ts:         new Date().toISOString(),
       };
-      const tid = activeThreadId;
+      const tid = "default";
       setProjMessages(prev => {
         const prevMap = Array.isArray(prev[proj.id]) ? {} : (prev[proj.id] || {});
-        const prevThread = prevMap[tid] || { id: tid, contactName: proj.client||"Client", messages: [] };
+        const prevThread = prevMap[tid] || { id: tid, contactName: "Project Chat", messages: [] };
         return { ...prev, [proj.id]: { ...prevMap, [tid]: { ...prevThread, messages: [...prevThread.messages, msg] } } };
       });
       setMsgDraft("");
@@ -5285,7 +5289,7 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           p_project_id:   Number(proj.id),
           p_message:      msg,
           p_thread_id:    tid,
-          p_contact_name: activeThread?.contactName || proj.client || "Client",
+          p_contact_name: "Project Chat",
         });
       } catch (_) {}
     };
@@ -5843,26 +5847,43 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
 
             {/* Clients */}
             <Card style={{ padding:20 }}>
-              <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.6, fontWeight:600, margin:"0 0 14px" }}>Clients</p>
+              <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.6, fontWeight:600, margin:"0 0 6px" }}>Clients</p>
+              <p style={{ fontSize:11, color:C.muted, margin:"0 0 14px", lineHeight:1.5 }}>
+                Each client gets a personal portal link below. When they open theirs, the project chat tags their messages with their name automatically.
+              </p>
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                {contacts.filter(c=>c.type==="client").map(c => (
-                  <div key={c.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"13px 16px", background:C.cream, borderRadius:12, border:`1px solid ${C.border}` }}>
-                    <div style={{ width:40, height:40, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, flexShrink:0 }}>{c.avatar}</div>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{c.name}</p>
-                      <p style={{ fontSize:12, color:C.accent, margin:"2px 0 0", fontWeight:500 }}>{c.role}</p>
+                {contacts.filter(c=>c.type==="client").map(c => {
+                  const slug = (c.name||"").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
+                  const portalUrl = (typeof window !== "undefined" ? window.location.origin : "") + `/client/${proj.id}?as=${slug}`;
+                  return (
+                    <div key={c.id} style={{ display:"flex", alignItems:"center", gap:14, padding:"13px 16px", background:C.cream, borderRadius:12, border:`1px solid ${C.border}` }}>
+                      <div style={{ width:40, height:40, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, flexShrink:0 }}>{c.avatar}</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>{c.name}</p>
+                        <p style={{ fontSize:12, color:C.accent, margin:"2px 0 0", fontWeight:500 }}>{c.role}</p>
+                        <p style={{ fontSize:10, color:C.muted, margin:"3px 0 0", fontFamily:"ui-monospace, monospace", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{portalUrl}</p>
+                      </div>
+                      <div style={{ fontSize:12, color:C.muted, textAlign:"right" }}>
+                        <p style={{ margin:0 }}>{c.email}</p>
+                        <p style={{ margin:"2px 0 0" }}>{c.phone}</p>
+                      </div>
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"flex-end" }}>
+                        <button
+                          onClick={async () => {
+                            try { await navigator.clipboard.writeText(portalUrl); pushNotif(`✓ ${c.name}'s link copied`, `Send it to them — their messages will be tagged "${c.name}" automatically.`, "item"); }
+                            catch(_) { pushNotif(`Could not copy link`, `You can select & copy it from the field above.`, "item"); }
+                          }}
+                          style={{ padding:"7px 12px", background:"#007AFF", border:"none", borderRadius:8, fontSize:12, cursor:"pointer", color:"#fff", fontWeight:600 }}
+                          title={`Copy ${c.name}'s personal portal + chat link`}>
+                          Copy link
+                        </button>
+                        <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
+                        <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
+                        <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
+                      </div>
                     </div>
-                    <div style={{ fontSize:12, color:C.muted, textAlign:"right" }}>
-                      <p style={{ margin:0 }}>{c.email}</p>
-                      <p style={{ margin:"2px 0 0" }}>{c.phone}</p>
-                    </div>
-                    <div style={{ display:"flex", gap:6 }}>
-                      <button onClick={()=>setTab("messages")} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Message</button>
-                      <button onClick={()=>setEditingContact({...c})} style={{ padding:"7px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:12, cursor:"pointer", color:C.ink }}>Edit</button>
-                      <button onClick={()=>updateProjField(proj.id, { contacts: contacts.filter(x=>x.id!==c.id) })} style={{ padding:"7px 10px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:14, cursor:"pointer", color:C.muted }}>×</button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
 
@@ -5931,8 +5952,142 @@ const Projects = ({ deepLink, clearDeepLink, goPortal, goProposals, teamMembers,
           </div>
         )}
 
-        {/* ── MESSAGES ── */}
+        {/* ── MESSAGES (shared project chat) ───────────────────────────
+            One conversation per project. Photographer + every project
+            contact (Mike, Kelly, etc. via their per-contact link) all post
+            into a single thread keyed "default". We merge messages from
+            any legacy multi-thread data so nothing is lost. Each non-
+            photographer message shows the sender's name with a deterministic
+            color so it's obvious who said what.                          */}
         {tab === "messages" && (() => {
+          // ── Local helpers (kept inline so they only run in this tab) ──
+          const _slug = (s) => (s||"").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
+          const _initials = (s) => (s||"").split(/\s+/).filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase() || "?";
+          const _hash = (s) => { let h = 0; for (let i = 0; i < (s||"").length; i++) h = ((h*31)+s.charCodeAt(i))|0; return Math.abs(h); };
+          const _PALETTE = ["#007AFF","#34C759","#AF52DE","#FF9500","#FF2D55","#5AC8FA","#FF3B30","#5856D6","#30D158"];
+          const _color = (s) => _PALETTE[_hash(s||"") % _PALETTE.length];
+          const myInitials = _initials(myName);
+          // Merge messages from ALL threads (legacy multi-thread + new "default")
+          // so the photographer sees the unified shared chat.
+          const allMsgs = [];
+          for (const t of Object.values(threadMap || {})) {
+            if (Array.isArray(t?.messages)) allMsgs.push(...t.messages);
+          }
+          allMsgs.sort((a,b) => {
+            const ta = a?.ts ? new Date(a.ts).getTime() : 0;
+            const tb = b?.ts ? new Date(b.ts).getTime() : 0;
+            return ta - tb;
+          });
+          const senderKey = (m) => `${m?.from||""}|${_slug(m?.senderName||"")}`;
+          const grouped = allMsgs.reduce((acc, msg, i) => {
+            const prev = allMsgs[i-1]; const next = allMsgs[i+1];
+            return [...acc, { ...msg, isFirst: !prev || senderKey(prev) !== senderKey(msg), isLast: !next || senderKey(next) !== senderKey(msg) }];
+          }, []);
+          const participants = (() => {
+            const seen = new Map();
+            for (const m of allMsgs) {
+              const isStudio = m.from === "studio";
+              const name = isStudio ? (m.senderName || myName) : (m.senderName || proj.client || "Guest");
+              const key = (isStudio ? "studio:" : "client:") + _slug(name);
+              if (!seen.has(key)) seen.set(key, { name, isStudio });
+            }
+            return Array.from(seen.values());
+          })();
+          return (
+            <Card style={{ display:"flex", flexDirection:"column", height:620, overflow:"hidden", borderRadius:16, padding:0 }}>
+              {/* Header: project chat title + participants pills */}
+              <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:"#fafafa", display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, flexShrink:0 }}>
+                <div>
+                  <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>Project Chat</p>
+                  <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{proj.name} · everyone with a link can join</p>
+                </div>
+                {participants.length > 0 && (
+                  <div style={{ display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end", maxWidth:"60%" }}>
+                    {participants.slice(0,5).map((p, i) => (
+                      <div key={i} title={p.isStudio ? `${p.name} (you)` : p.name}
+                        style={{ display:"flex", alignItems:"center", gap:5, padding:"3px 9px 3px 3px", borderRadius:99, background:"#fff", border:`1px solid ${C.border}` }}>
+                        <span style={{ width:20, height:20, borderRadius:"50%", background: p.isStudio ? "#636366" : _color(p.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{_initials(p.name)}</span>
+                        <span style={{ fontSize:11, color:C.ink, fontWeight:600 }}>{p.isStudio ? "You" : p.name.split(" ")[0]}</span>
+                      </div>
+                    ))}
+                    {participants.length > 5 && <span style={{ fontSize:11, color:C.muted, alignSelf:"center" }}>+{participants.length-5}</span>}
+                  </div>
+                )}
+              </div>
+              {/* Messages */}
+              <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"14px 14px", background:"#fff", display:"flex", flexDirection:"column", gap:1 }}>
+                {grouped.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"60px 24px", color:C.muted }}>
+                    <div style={{ fontSize:36, marginBottom:10 }}>💬</div>
+                    <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:"0 0 4px" }}>No messages yet</p>
+                    <p style={{ fontSize:11, color:C.muted, margin:0 }}>Share each contact's link from the Contacts tab to invite them in.</p>
+                  </div>
+                )}
+                {grouped.map((msg, i) => {
+                  const isMe = msg.from === "studio" && _slug(msg.senderName||myName) === _slug(myName);
+                  const fromStudio = msg.from === "studio";
+                  const senderDisplay = fromStudio ? (msg.senderName || myName) : (msg.senderName || proj.client || "Guest");
+                  const senderColor = fromStudio ? "#636366" : _color(senderDisplay);
+                  const showAvatar = !isMe && msg.isLast;
+                  const showName   = !isMe && msg.isFirst;
+                  const showTime   = msg.isLast;
+                  const timeStr = msg.ts ? new Date(msg.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
+                  const br = { tl:18, tr:18, bl:18, br:18 };
+                  if (isMe) br.br = msg.isLast ? 4 : 18;
+                  else      br.bl = msg.isLast ? 4 : 18;
+                  return (
+                    <div key={msg.id||i}>
+                      {showName && (
+                        <p style={{ fontSize:11, color:senderColor, fontWeight:700, margin:"10px 0 3px 44px" }}>
+                          {senderDisplay}{fromStudio ? " · Photographer" : ""}
+                        </p>
+                      )}
+                      <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom:msg.isLast?2:1 }}>
+                        <div style={{ width:28, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                          {showAvatar && (
+                            <div style={{ width:28, height:28, borderRadius:"50%", background:senderColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
+                              {_initials(senderDisplay)}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ maxWidth:"70%", padding:"10px 13px", fontSize:14, lineHeight:1.5,
+                          borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
+                          background: isMe ? "#007AFF" : "#E9E9EB",
+                          color: isMe ? "#fff" : "#000" }}>
+                          {msg.text}
+                        </div>
+                        {isMe && <div style={{ width:28, flexShrink:0 }}/>}
+                      </div>
+                      {showTime && (
+                        <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?34:0, paddingLeft:isMe?0:44 }}>
+                          {senderDisplay}{isMe ? " (you)" : ""} · {timeStr}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Compose */}
+              <div style={{ padding:"10px 12px", borderTop:`1px solid ${C.border}`, background:"#fff", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
+                    <input value={msgDraft} onChange={e=>setMsgDraft(e.target.value)}
+                      onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMsg(); }}}
+                      placeholder={`Message everyone in this project as ${myName}…`}
+                      style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
+                  </div>
+                  <button onClick={sendMsg} disabled={!msgDraft.trim()}
+                    style={{ width:34, height:34, borderRadius:"50%", background:msgDraft.trim()?"#007AFF":"#c7c7cc", border:"none", cursor:msgDraft.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", transition:"background .15s", flexShrink:0 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  </button>
+                </div>
+              </div>
+            </Card>
+          );
+        })()}
+
+        {/* ── MESSAGES (legacy two-pane UI replaced by unified chat above) ── */}
+        {false && (() => {
           const myInitials = myName.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
           return (
             <Card style={{ display:"flex", height:620, overflow:"hidden", borderRadius:16, padding:0 }}>

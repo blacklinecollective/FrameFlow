@@ -11,6 +11,13 @@ const C = {
 
 const fmt = s => `${Math.floor((s||0)/60)}:${String(Math.floor((s||0)%60)).padStart(2,"0")}`;
 
+// ── Identity helpers (shared portal chat) ────────────────────────────────────
+const slugify = (s) => (s || "").toString().toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+const initials = (s) => (s || "").split(/\s+/).filter(Boolean).map(w => w[0]).slice(0,2).join("").toUpperCase() || "?";
+const _hash = (s) => { let h = 0; for (let i = 0; i < (s||"").length; i++) h = ((h*31) + s.charCodeAt(i)) | 0; return Math.abs(h); };
+const SENDER_PALETTE = ["#007AFF","#34C759","#AF52DE","#FF9500","#FF2D55","#5AC8FA","#FF3B30","#5856D6","#30D158"];
+const colorForName = (s) => SENDER_PALETTE[_hash(s||"") % SENDER_PALETTE.length];
+
 // ── Video download — direct navigation to Supabase ?download= URL ────────────
 // When the server returns Content-Disposition: attachment the browser saves the
 // file and does NOT navigate away from the current page. No popup needed.
@@ -479,6 +486,15 @@ export default function ClientPortalPage({ params }) {
   const [payModal,  setPayModal]  = useState(null);  // invoice being paid
   const [payDone,   setPayDone]   = useState({});    // { [invoiceId]: true }
   const [paying,    setPaying]    = useState(false);
+  // ── Shared chat identity ──────────────────────────────────────────────
+  // The portal supports multiple participants in one project chat (e.g.
+  // Mike + Kelly + the photographer). Each visitor identifies themselves
+  // via ?as=<slug> (auto-matched to contacts) or via an in-app picker.
+  // The chosen identity is remembered in localStorage per-project.
+  const [identity,           setIdentity]           = useState(null);   // { name, slug, contactId? } | null
+  const [identityResolved,   setIdentityResolved]   = useState(false);
+  const [identityPickerOpen, setIdentityPickerOpen] = useState(false);
+  const [pickerNameDraft,    setPickerNameDraft]    = useState("");
   const sbRef = useRef(null);
   const msgEndRef = useRef(null);
 
@@ -512,6 +528,35 @@ export default function ClientPortalPage({ params }) {
         }
         setData(result);
         setLoading(false);
+        // ── Resolve who the visitor is for the shared chat ────────────────
+        try {
+          const contacts = (result.project?.contacts || []).filter(c => c && c.name);
+          // Always include the project's primary client as a fallback contact
+          if (result.project?.client && !contacts.find(c => slugify(c.name) === slugify(result.project.client))) {
+            contacts.unshift({ id:"primary", name: result.project.client, role:"Client" });
+          }
+          const params = new URLSearchParams(window.location.search || "");
+          const asParam = params.get("as");
+          const stored = (() => {
+            try { return JSON.parse(localStorage.getItem("portal_identity_" + projectId) || "null"); }
+            catch { return null; }
+          })();
+          let resolved = null;
+          if (asParam) {
+            const sParam = slugify(asParam);
+            const match = contacts.find(c => slugify(c.name) === sParam);
+            resolved = match
+              ? { name: match.name, slug: slugify(match.name), contactId: match.id, role: match.role }
+              : { name: asParam, slug: sParam }; // free-form fallback
+          } else if (stored && stored.name) {
+            resolved = stored;
+          }
+          if (resolved) {
+            setIdentity(resolved);
+            try { localStorage.setItem("portal_identity_" + projectId, JSON.stringify(resolved)); } catch(_) {}
+          }
+        } catch(_) {}
+        setIdentityResolved(true);
       } catch(err) {
         if (cancelled) return;
         setFetchErr(err?.message || "Something went wrong.");
@@ -547,6 +592,13 @@ export default function ClientPortalPage({ params }) {
       msgEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [msgs, threads, selThreadId]);
+
+  // ── Prompt for identity when the visitor first opens the Messages tab ─
+  useEffect(() => {
+    if (tab === "messages" && identityResolved && !identity && !identityPickerOpen) {
+      setIdentityPickerOpen(true);
+    }
+  }, [tab, identity, identityResolved, identityPickerOpen]);
 
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream }}>
@@ -642,21 +694,26 @@ export default function ClientPortalPage({ params }) {
     setTimeout(() => setDlProgress(null), 2500);
   };
 
-  // ── Send message to photographer ────────────────────────────────────────────
+  // ── Send message to the shared project chat ─────────────────────────────────
+  // All participants (photographer, contacts, walk-ins) post into a single
+  // thread keyed "default" — the senderName is taken from the resolved
+  // identity. This collapses the old multi-thread model into one shared chat.
   const sendMsg = async () => {
     const text = msgDraft.trim();
     if (!text || msgSending) return;
+    if (!identity) { setIdentityPickerOpen(true); return; } // require identity
     setMsgSending(true);
-    const tid = selThreadId || "default";
+    const tid = "default"; // always the shared thread
     const msg = {
       id:         "msg_" + Date.now(),
       from:       "client",
-      senderName: project?.client || "Client",
+      senderName: identity.name,
+      senderSlug: identity.slug,
       text,
       ts:         new Date().toISOString(),
     };
     setThreads(prev => {
-      const prevThread = prev[tid] || { id: tid, contactName: project?.client||"Client", messages: [] };
+      const prevThread = prev[tid] || { id: tid, contactName: "Project Chat", messages: [] };
       return { ...prev, [tid]: { ...prevThread, messages: [...prevThread.messages, msg] } };
     });
     setMsgDraft("");
@@ -667,13 +724,28 @@ export default function ClientPortalPage({ params }) {
           p_project_id:   Number(projectId),
           p_message:      msg,
           p_thread_id:    tid,
-          p_contact_name: threads[tid]?.contactName || project?.client || "Client",
+          p_contact_name: "Project Chat",
         });
         setMsgSent(true);
         setTimeout(() => setMsgSent(false), 3000);
       }
     } catch (_) {}
     setMsgSending(false);
+  };
+
+  // Confirm an identity picker selection.
+  const confirmIdentity = (val) => {
+    if (!val) return;
+    const contacts = (project?.contacts || []);
+    const sVal = slugify(val);
+    const match = contacts.find(c => slugify(c.name) === sVal);
+    const next = match
+      ? { name: match.name, slug: slugify(match.name), contactId: match.id, role: match.role }
+      : { name: val, slug: sVal };
+    setIdentity(next);
+    setIdentityPickerOpen(false);
+    setPickerNameDraft("");
+    try { localStorage.setItem("portal_identity_" + projectId, JSON.stringify(next)); } catch(_) {}
   };
 
   return (
@@ -913,83 +985,115 @@ export default function ClientPortalPage({ params }) {
 
       {/* ── Messages tab ── */}
       {tab === "messages" && (() => {
-        const threadList = Object.values(threads);
-        const activeThread = selThreadId ? (threads[selThreadId] || null) : null;
-        const activeMsgs = activeThread?.messages || msgs; // fallback to old msgs state
-        const clientName  = project?.client || "Client";
-        const studioInits = studioName.split(" ").map(w=>w[0]).slice(0,2).join("");
-        const clientInits = clientName.split(" ").map(w=>w[0]).slice(0,2).join("");
+        // ── Shared chat: merge messages from ALL legacy threads in time order ──
+        // The photographer + every project contact post into a single conversation.
+        // Older deployments stored separate threads per contact; we read all of them
+        // here and sort by timestamp so nothing is lost. New sends always go to
+        // thread "default".
+        const collectedMsgs = [];
+        for (const t of Object.values(threads || {})) {
+          if (Array.isArray(t?.messages)) collectedMsgs.push(...t.messages);
+        }
+        if (collectedMsgs.length === 0 && Array.isArray(msgs)) collectedMsgs.push(...msgs);
+        // Stable sort by ts (fall back to insertion order for missing ts).
+        collectedMsgs.sort((a, b) => {
+          const ta = a?.ts ? new Date(a.ts).getTime() : 0;
+          const tb = b?.ts ? new Date(b.ts).getTime() : 0;
+          return ta - tb;
+        });
+        const allMsgs = collectedMsgs;
+
+        const meSlug = identity?.slug || "";
+        const isMine = (m) => m.from === "client" && slugify(m.senderName || "") === meSlug && meSlug !== "";
+
         const msgBg = dark ? "#1c1c1e" : "#fff";
         const bubbleMe    = "#007AFF";
         const bubbleThem  = dark ? "#3a3a3c" : "#E9E9EB";
         const textMe   = "#fff";
         const textThem = dark ? "#fff" : "#000";
-        const grouped = activeMsgs.reduce((acc, m, i) => {
-          const prev = activeMsgs[i-1]; const next = activeMsgs[i+1];
-          return [...acc, { ...m, isFirst:!prev||prev.from!==m.from, isLast:!next||next.from!==m.from }];
+        // Group consecutive messages from the same sender (using senderName + from
+        // pair) so name/avatar only appear once per run.
+        const senderKey = (m) => `${m?.from||""}|${slugify(m?.senderName||"")}`;
+        const grouped = allMsgs.reduce((acc, m, i) => {
+          const prev = allMsgs[i-1]; const next = allMsgs[i+1];
+          return [...acc, { ...m, isFirst: !prev || senderKey(prev) !== senderKey(m), isLast: !next || senderKey(next) !== senderKey(m) }];
         }, []);
+        // List of contacts as picker options.
+        const pickerContacts = (() => {
+          const list = (project?.contacts || []).filter(c => c && c.name);
+          if (project?.client && !list.find(c => slugify(c.name) === slugify(project.client))) {
+            list.unshift({ id:"primary", name: project.client, role:"Client" });
+          }
+          return list;
+        })();
         return (
           <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 57px)" }}>
-            {/* Thread selector — only show if multiple threads */}
-            {threadList.length > 1 && (
-              <div style={{ padding:"8px 12px", borderBottom:`1px solid ${brd}`, background:bg, display:"flex", gap:6, overflowX:"auto", flexShrink:0 }}>
-                {threadList.map(t => (
-                  <button key={t.id}
-                    onClick={() => setSelThreadId(t.id)}
-                    style={{ padding:"5px 12px", borderRadius:16, border:`1.5px solid ${t.id===selThreadId?"#007AFF":brd}`, background:t.id===selThreadId?"#007AFF":"transparent", color:t.id===selThreadId?"#fff":fg, fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", fontFamily:"inherit" }}>
-                    {t.contactName}
-                  </button>
-                ))}
-              </div>
-            )}
             {/* Header */}
-            <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:bg, flexShrink:0 }}>
-              <div style={{ width:46, height:46, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, fontWeight:700 }}>
-                {studioInits}
+            <div style={{ padding:"14px 20px", borderBottom:`1px solid ${brd}`, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, background:bg, flexShrink:0 }}>
+              <div>
+                <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>Project Chat</p>
+                <p style={{ fontSize:11, color:sub, margin:"2px 0 0" }}>{studioName} · everyone in the project</p>
               </div>
-              <p style={{ fontSize:14, fontWeight:600, color:fg, margin:0 }}>{studioName}</p>
-              <p style={{ fontSize:11, color:sub, margin:0 }}>Photographer</p>
+              <button onClick={() => { setPickerNameDraft(identity?.name || ""); setIdentityPickerOpen(true); }}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 10px", border:`1px solid ${brd}`, borderRadius:10, background:dark?"rgba(255,255,255,.06)":"#fff", cursor:"pointer", fontFamily:"inherit" }}>
+                {identity ? (
+                  <>
+                    <span style={{ width:22, height:22, borderRadius:"50%", background:colorForName(identity.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>{initials(identity.name)}</span>
+                    <span style={{ fontSize:12, color:fg, fontWeight:600 }}>You're {identity.name}</span>
+                    <span style={{ fontSize:10, color:sub }}>change</span>
+                  </>
+                ) : (
+                  <span style={{ fontSize:12, color:fg, fontWeight:600 }}>Who are you?</span>
+                )}
+              </button>
             </div>
             {/* Messages */}
             <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", background:msgBg, display:"flex", flexDirection:"column", gap:1 }}>
-              {activeMsgs.length === 0 && (
+              {allMsgs.length === 0 && (
                 <div style={{ textAlign:"center", padding:"60px 0", color:sub }}>
                   <div style={{ fontSize:40, marginBottom:12 }}>💬</div>
                   <p style={{ fontSize:14, fontWeight:600, color:fg, margin:"0 0 6px" }}>No messages yet</p>
-                  <p style={{ fontSize:13, color:sub, margin:0 }}>Say hello to {studioName}</p>
+                  <p style={{ fontSize:13, color:sub, margin:0 }}>Be the first to say hello.</p>
                 </div>
               )}
               {grouped.map((m, i) => {
-                const isMe = m.from === "client";
-                const showAvatar = !isMe && m.isLast;
-                const showName   = !isMe && m.isFirst;
+                const fromPhotographer = m.from !== "client";
+                const mine = isMine(m);
+                const senderDisplay = fromPhotographer ? (m.senderName || studioName) : (m.senderName || "Guest");
+                const senderColor = fromPhotographer ? "#636366" : colorForName(senderDisplay);
+                const showAvatar = !mine && m.isLast;
+                const showName   = !mine && m.isFirst;
                 const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time||"");
                 const br = { tl:18, tr:18, bl:18, br:18 };
-                if (isMe) br.br = m.isLast ? 4 : 18;
-                else       br.bl = m.isLast ? 4 : 18;
+                if (mine) br.br = m.isLast ? 4 : 18;
+                else      br.bl = m.isLast ? 4 : 18;
                 return (
                   <div key={m.id||i}>
-                    {showName && <p style={{ fontSize:11, color:sub, margin:"10px 0 3px 46px" }}>{m.senderName || studioName}</p>}
-                    <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
-                      <div style={{ width:32, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                    {showName && (
+                      <p style={{ fontSize:11, color:senderColor, fontWeight:700, margin:"10px 0 3px 46px" }}>
+                        {senderDisplay}{fromPhotographer ? " · Photographer" : ""}
+                      </p>
+                    )}
+                    <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:mine?"flex-end":"flex-start", marginBottom:1 }}>
+                      <div style={{ width:32, flexShrink:0, visibility:!mine?"visible":"hidden" }}>
                         {showAvatar && (
-                          <div style={{ width:32, height:32, borderRadius:"50%", background:brandColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>
-                            {studioInits}
+                          <div style={{ width:32, height:32, borderRadius:"50%", background:senderColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>
+                            {initials(senderDisplay)}
                           </div>
                         )}
                       </div>
                       <div style={{ maxWidth:"72%", padding:"10px 14px", fontSize:14, lineHeight:1.5,
                         borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
-                        background: isMe ? bubbleMe : bubbleThem,
-                        color: isMe ? textMe : textThem,
+                        background: mine ? bubbleMe : bubbleThem,
+                        color: mine ? textMe : textThem,
                       }}>
                         {m.text}
                       </div>
-                      {isMe && <div style={{ width:32, flexShrink:0 }}/>}
+                      {mine && <div style={{ width:32, flexShrink:0 }}/>}
                     </div>
                     {m.isLast && (
-                      <p style={{ fontSize:10, color:sub, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?38:0, paddingLeft:isMe?0:46 }}>
-                        {isMe ? clientName : (m.senderName || studioName)} · {timeStr}
+                      <p style={{ fontSize:10, color:sub, margin:"2px 0 8px", textAlign:mine?"right":"left", paddingRight:mine?38:0, paddingLeft:mine?0:46 }}>
+                        {senderDisplay}{mine ? " (you)" : ""} · {timeStr}
                       </p>
                     )}
                   </div>
@@ -1013,6 +1117,64 @@ export default function ClientPortalPage({ params }) {
                 </button>
               </div>
               {msgSent && <p style={{ fontSize:11, color:C.green, marginTop:6, textAlign:"center" }}>✓ Delivered</p>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Identity picker modal (shared chat) ── */}
+      {identityPickerOpen && (() => {
+        const list = (() => {
+          const l = (project?.contacts || []).filter(c => c && c.name);
+          if (project?.client && !l.find(c => slugify(c.name) === slugify(project.client))) {
+            l.unshift({ id:"primary", name: project.client, role:"Client" });
+          }
+          return l;
+        })();
+        return (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:24 }}
+            onClick={(e) => { if (e.target === e.currentTarget && identity) setIdentityPickerOpen(false); }}>
+            <div style={{ background:"#fff", borderRadius:18, padding:"28px 26px", maxWidth:380, width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,.25)" }}>
+              <h3 style={{ fontSize:18, fontWeight:700, color:C.ink, margin:"0 0 6px" }}>Who's chatting?</h3>
+              <p style={{ fontSize:13, color:C.muted, margin:"0 0 18px", lineHeight:1.5 }}>
+                Pick your name so {studioName} and the rest of the project know who's saying what.
+              </p>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
+                {list.map(c => {
+                  const isCurrent = identity && slugify(identity.name) === slugify(c.name);
+                  return (
+                    <button key={c.id || c.name} onClick={() => confirmIdentity(c.name)}
+                      style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:`1.5px solid ${isCurrent?"#007AFF":C.border}`, borderRadius:12, background:isCurrent?"#f0f6ff":"#fff", cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}>
+                      <span style={{ width:30, height:30, borderRadius:"50%", background:colorForName(c.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>{initials(c.name)}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{c.name}</p>
+                        {c.role && <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{c.role}</p>}
+                      </div>
+                      {isCurrent && <span style={{ fontSize:10, color:"#007AFF", fontWeight:700 }}>YOU</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:14 }}>
+                <p style={{ fontSize:11, color:C.muted, margin:"0 0 6px", textTransform:"uppercase", letterSpacing:1 }}>Not on the list?</p>
+                <div style={{ display:"flex", gap:8 }}>
+                  <input value={pickerNameDraft} onChange={e => setPickerNameDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && pickerNameDraft.trim()) confirmIdentity(pickerNameDraft.trim()); }}
+                    placeholder="Your name"
+                    style={{ flex:1, padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, outline:"none", fontFamily:"inherit" }}/>
+                  <button onClick={() => pickerNameDraft.trim() && confirmIdentity(pickerNameDraft.trim())}
+                    disabled={!pickerNameDraft.trim()}
+                    style={{ padding:"10px 16px", background: pickerNameDraft.trim()?C.ink:"#ccc", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor: pickerNameDraft.trim()?"pointer":"default" }}>
+                    Continue
+                  </button>
+                </div>
+              </div>
+              {identity && (
+                <button onClick={() => setIdentityPickerOpen(false)}
+                  style={{ width:"100%", marginTop:14, padding:"8px 0", background:"none", border:"none", color:C.muted, fontSize:11, cursor:"pointer" }}>
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         );
