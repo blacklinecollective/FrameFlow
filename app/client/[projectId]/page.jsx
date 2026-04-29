@@ -637,6 +637,25 @@ export default function ClientPortalPage({ params }) {
     }
   }, [tab, identity, identityResolved, identityPickerOpen]);
 
+  // ── Initialize the profile form when identity + data resolve ─────────
+  // IMPORTANT: this hook must live above the early-return blocks below,
+  // because React requires hooks to be called in the same order on every
+  // render. Putting it after a conditional return crashes the component.
+  useEffect(() => {
+    const list = data?.project?.contacts || [];
+    if (!identity || list.length === 0) { setProfileForm(null); return; }
+    let mc = null;
+    if (identity.contactId) mc = list.find(c => c.id === identity.contactId);
+    if (!mc) mc = list.find(c => slugify(c.name) === identity.slug) || null;
+    if (!mc) { setProfileForm(null); return; }
+    setProfileForm({
+      name:    mc.name  || "",
+      email:   mc.email || "",
+      phone:   mc.phone || "",
+      address: mc.address || { line1:"", city:"", state:"", zip:"" },
+    });
+  }, [data, identity]);
+
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.cream }}>
       <div style={{ textAlign:"center" }}>
@@ -889,18 +908,6 @@ export default function ClientPortalPage({ params }) {
     const next = (myContact.paymentMethods || []).map(m => ({ ...m, default: m.id === pmId }));
     await saveContactPatch({ paymentMethods: next });
   };
-
-  // Initialize the profile-form when identity / contact resolves the first time
-  useEffect(() => {
-    if (!myContact) { setProfileForm(null); return; }
-    setProfileForm({
-      name:  myContact.name  || "",
-      email: myContact.email || "",
-      phone: myContact.phone || "",
-      address: myContact.address || { line1:"", city:"", state:"", zip:"" },
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myContact?.id]);
 
   const saveProfileForm = async () => {
     if (!profileForm) return;
