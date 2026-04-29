@@ -10567,7 +10567,7 @@ const FormsPage = ({ autoSentForms = [] }) => {
 };
 
 // ── Proposals & Service Packages ──────────────────────────────
-const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPackages }) => {
+const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPackages, appProjects, crmClients, brandKit, supabaseSession }) => {
   const [proposals,  setProposals_local]  = useState([]);
   const [packages,   setPackages_local]   = useState(INITIAL_SERVICE_PACKAGES);
   const proposals_init = useRef(false);
@@ -10786,13 +10786,33 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Client Name</label>
-              <input value={nClient} onChange={e=>setNClient(e.target.value)} placeholder="e.g. Sarah & James Smith"
+              <input value={nClient} list="ff-prop-clients"
+                onChange={e=>setNClient(e.target.value)}
+                placeholder="e.g. Sarah & James Smith"
                 style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+              <datalist id="ff-prop-clients">
+                {(crmClients || []).map(c => <option key={c.id} value={c.name}/>)}
+              </datalist>
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Project Name</label>
-              <input value={nProject} onChange={e=>setNProject(e.target.value)} placeholder="e.g. Smith Wedding (optional)"
+              <input value={nProject} list="ff-prop-projects"
+                onChange={e => {
+                  const v = e.target.value;
+                  setNProject(v);
+                  // If the photographer picks a project we know about, auto-fill
+                  // the client name (only if blank) and seed a sensible title.
+                  const matched = (appProjects || []).find(p => p.name === v);
+                  if (matched) {
+                    if (!nClient.trim() && matched.client) setNClient(matched.client);
+                    if (!nTitle.trim() && matched.client) setNTitle(`${matched.type || "Photography"} — ${matched.client}`);
+                  }
+                }}
+                placeholder="e.g. Smith Wedding (optional)"
                 style={{ width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", outline:"none" }}/>
+              <datalist id="ff-prop-projects">
+                {(appProjects || []).map(p => <option key={p.id} value={p.name}>{p.client ? `${p.client} · ${p.type || ""}` : ""}</option>)}
+              </datalist>
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Personal Message (optional)</label>
@@ -12745,7 +12765,7 @@ const Analytics = () => {
   );
 };
 
-const Finance = ({ appInvoices, setAppInvoices, appProjects }) => {
+const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKit, supabaseSession }) => {
   const [tab, setTab] = useState("overview");
   const [expenses, setExpenses] = useState(EXPENSES);
   const [showAdd, setShowAdd] = useState(false);
@@ -14144,22 +14164,34 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects }) => {
 
             {createStep === 1 ? (
               <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"20px 24px" }}>
-                {/* Client & project */}
+                {/* Client & project — auto-pull from CRM + projects, with link.
+                    Selecting a project auto-fills the client when blank. */}
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
                   <div>
                     <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Client*</label>
                     <select value={createForm.client} onChange={e=>setCreateForm(f=>({...f,client:e.target.value}))}
                       style={{ width:"100%", padding:"9px 11px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:"#fff" }}>
                       <option value="">— select client —</option>
-                      {["Sarah & James Chen","Atlas Co.","Maria Rivera","Coastal Cafe","Jordan & Casey Lee"].map(c=><option key={c} value={c}>{c}</option>)}
+                      {(crmClients || []).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                     </select>
                   </div>
                   <div>
                     <label style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.4, display:"block", marginBottom:5 }}>Project</label>
-                    <select value={createForm.project} onChange={e=>setCreateForm(f=>({...f,project:e.target.value}))}
+                    <select value={createForm.project}
+                      onChange={e => {
+                        const name = e.target.value;
+                        setCreateForm(f => {
+                          const next = { ...f, project: name };
+                          if (name && !f.client) {
+                            const matched = (appProjects || []).find(p => p.name === name);
+                            if (matched?.client) next.client = matched.client;
+                          }
+                          return next;
+                        });
+                      }}
                       style={{ width:"100%", padding:"9px 11px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:"#fff" }}>
                       <option value="">— select project —</option>
-                      {["Chen Wedding","Atlas Brand Shoot","Rivera Portraits","Coastal Cafe Film"].map(p=><option key={p} value={p}>{p}</option>)}
+                      {(appProjects || []).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                     </select>
                   </div>
                 </div>
@@ -27136,14 +27168,14 @@ function AppShell({ supabaseSession, supabaseClient }) {
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
-    proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages}/>,
+    proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     forms:     <FormsPage autoSentForms={sentForms}/>,
     inbox:     <Inquiries emailTemplates={emailTemplates} brandKit={brandKit}/>,
     calendar:  <CalendarPage availability={availability} setAvailability={setAvailability} bookings={bookings} setBookings={setBookings} calEvents={calEvents} setCalEvents={setCalEvents}/>,
     design:    <DesignStudio/>,
     community: <Community commNotifs={commNotifs} setCommNotifs={setCommNotifs} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     analytics: <Analytics/>,
-    finance:   <Finance appInvoices={appInvoices} setAppInvoices={setAppInvoices} appProjects={appProjects}/>,
+    finance:   <Finance appInvoices={appInvoices} setAppInvoices={setAppInvoices} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     website:   <WebsiteBuilder/>,
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
