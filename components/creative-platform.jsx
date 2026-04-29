@@ -23025,6 +23025,11 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
   const [detailTab,   setDetailTab]    = useState("overview"); // overview | projects | financials | timeline | messages
   const [chatDraft,   setChatDraft]    = useState("");
   const [chatSending, setChatSending]  = useState(false);
+  // Add-participant inline form for general chat
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [newParticipantName, setNewParticipantName] = useState("");
+  // Reused "just copied" feedback for participant copy-link buttons.
+  const [justCopiedId, setJustCopiedId] = useState(null);
   // Photographer's display name (used as senderName on outgoing chat msgs).
   const myDisplayName = (supabaseSession?.user?.user_metadata?.full_name)
     || (brandKit?.studioName)
@@ -23485,19 +23490,25 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
 
             {/* ── MESSAGES TAB (general chat with this CRM client) ──
                 Persistent thread between the photographer and this client,
-                separate from any project chat. Messages are stored in
-                clientChats[slug(client.name)] and synced via the auto-save
-                loop. The same thread shows up on the public client portal
-                under Messages > General chat (matched by visitor identity
-                slug → CRM client name slug).                                */}
+                separate from any project chat. Messages live in
+                clientChats[slug(client.name)]. Additional participants
+                (accountant, spouse, agent, etc.) can be added — each gets
+                a per-contact link with `?as=<slug>&general=<clientSlug>`
+                so they post into the same thread but tagged as themselves. */}
             {detailTab === "messages" && (() => {
               const slug = slugifyName(sel.name);
               const msgs = (clientChats && clientChats[slug]) || [];
+              const chatContacts = sel.chatContacts || [];
+              // Inline color palette + helpers, mirroring the project-chat ones
+              const _PALETTE = ["#007AFF","#34C759","#AF52DE","#FF9500","#FF2D55","#5AC8FA","#FF3B30","#5856D6","#30D158"];
+              const _hash = (s) => { let h = 0; for (let i = 0; i < (s||"").length; i++) h = ((h*31)+s.charCodeAt(i))|0; return Math.abs(h); };
+              const colorFor = (s) => _PALETTE[_hash(s||"") % _PALETTE.length];
+              const initials2 = (s) => (s||"").split(/\s+/).filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase() || "?";
+              // Group consecutive same-sender messages (key by from + senderName slug).
+              const senderKey = (m) => `${m?.from||""}|${slugifyName(m?.senderName||"")}`;
               const grouped = msgs.reduce((acc, m, i) => {
                 const prev = msgs[i-1]; const next = msgs[i+1];
-                const isFirst = !prev || prev.from !== m.from;
-                const isLast  = !next || next.from !== m.from;
-                return [...acc, { ...m, isFirst, isLast }];
+                return [...acc, { ...m, isFirst: !prev || senderKey(prev) !== senderKey(m), isLast: !next || senderKey(next) !== senderKey(m) }];
               }, []);
               const sendChat = () => {
                 const text = chatDraft.trim();
@@ -23510,16 +23521,94 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                 setChatDraft("");
                 setChatSending(false);
               };
-              const clientInits = (sel.name||"").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+              // ── Add / remove participants (stored on the CRM client record) ─
+              const addParticipant = () => {
+                const name = (newParticipantName || "").trim();
+                if (!name) return;
+                const exists = (sel.chatContacts || []).some(c => slugifyName(c.name) === slugifyName(name));
+                if (exists) { setNewParticipantName(""); return; }
+                const next = [...(sel.chatContacts || []), { id: "gc_" + Date.now().toString(36), name, addedAt: new Date().toISOString() }];
+                if (setClientsProp) setClientsProp(clients.map(c => c.id === sel.id ? { ...c, chatContacts: next } : c));
+                setNewParticipantName("");
+                setShowAddParticipant(false);
+              };
+              const removeParticipant = (cid) => {
+                if (!setClientsProp) return;
+                const next = (sel.chatContacts || []).filter(c => c.id !== cid);
+                setClientsProp(clients.map(c => c.id === sel.id ? { ...c, chatContacts: next } : c));
+              };
+              // Participants for header pills + per-contact link generation. The CRM
+              // client themselves is always implicit (their slug is the chat key).
+              const allParticipants = [
+                { id: "primary", name: sel.name, primary: true },
+                ...chatContacts.map(c => ({ ...c, primary: false })),
+              ];
+              // Per-contact link: pick the first project the client is on as the
+              // portal vehicle. If none, use any project from PROJECTS as fallback.
+              const projForLink = (sel.projectIds && sel.projectIds[0]) || (PROJECTS[0]?.id) || null;
+              const ownerId = supabaseSession?.user?.id;
+              const linkFor = (participantName) => {
+                if (!projForLink || typeof window === "undefined") return null;
+                const pSlug = slugifyName(participantName);
+                const ownerQ = ownerId ? `&owner=${ownerId}` : "";
+                return window.location.origin + `/client/${projForLink}?as=${pSlug}${ownerQ}&general=${slug}`;
+              };
               return (
-                <div style={{ maxWidth:680, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 240px)", border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden", background:"#fff" }}>
+                <div style={{ maxWidth:760, margin:"0 auto", display:"flex", flexDirection:"column", height:"calc(100vh - 240px)", border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden", background:"#fff" }}>
                   {/* Header */}
-                  <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:"#fafafa", display:"flex", alignItems:"center", gap:10 }}>
-                    <div style={{ width:32, height:32, borderRadius:"50%", background:"linear-gradient(135deg,#636366,#8e8e93)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>{clientInits}</div>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{sel.name}</p>
-                      <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>Direct chat — separate from project chats</p>
+                  <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:"#fafafa" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                      <div style={{ width:32, height:32, borderRadius:"50%", background:colorFor(sel.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>{initials2(sel.name)}</div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{sel.name}</p>
+                        <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>General chat — separate from project chats</p>
+                      </div>
+                      <button onClick={() => setShowAddParticipant(s => !s)}
+                        style={{ padding:"6px 12px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:8, fontSize:11, fontWeight:600, color:C.ink, cursor:"pointer", fontFamily:"inherit" }}>
+                        + Add participant
+                      </button>
                     </div>
+                    {/* Participant pills */}
+                    <div style={{ display:"flex", gap:6, marginTop:10, flexWrap:"wrap" }}>
+                      {allParticipants.map(p => {
+                        const url = linkFor(p.name);
+                        return (
+                          <span key={p.id} title={p.primary ? `${p.name} (the client)` : p.name}
+                            style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"4px 4px 4px 4px", background:"#fff", border:`1px solid ${C.border}`, borderRadius:99 }}>
+                            <span style={{ width:22, height:22, borderRadius:"50%", background:colorFor(p.name), color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700 }}>{initials2(p.name)}</span>
+                            <span style={{ fontSize:11, color:C.ink, fontWeight:600, paddingRight:p.primary?10:0 }}>{p.name.split(" ")[0]}{p.primary && <span style={{ marginLeft:6, fontSize:9, color:C.muted, fontWeight:500 }}>client</span>}</span>
+                            {url && (
+                              <button onClick={async () => { const ok = await copyToClipboard(url); if (ok) { setJustCopiedId("gc_" + p.id); setTimeout(() => setJustCopiedId(prev => prev === ("gc_"+p.id) ? null : prev), 1500); } }}
+                                style={{ padding:"3px 9px", background: justCopiedId === ("gc_"+p.id) ? "#22a06b" : "#007AFF", color:"#fff", border:"none", borderRadius:99, fontSize:10, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                                {justCopiedId === ("gc_"+p.id) ? "✓ Copied" : "Copy link"}
+                              </button>
+                            )}
+                            {!p.primary && (
+                              <button onClick={() => removeParticipant(p.id)} title="Remove from chat"
+                                style={{ padding:"2px 7px", background:"transparent", color:C.muted, border:"none", cursor:"pointer", fontSize:13, fontFamily:"inherit", lineHeight:1 }}>×</button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {/* Add participant inline form */}
+                    {showAddParticipant && (
+                      <div style={{ display:"flex", gap:6, marginTop:10 }}>
+                        <input value={newParticipantName} onChange={e => setNewParticipantName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") addParticipant(); if (e.key === "Escape") { setShowAddParticipant(false); setNewParticipantName(""); }}}
+                          autoFocus
+                          placeholder="Name (e.g. Sarah — accountant)"
+                          style={{ flex:1, padding:"7px 11px", border:`1.5px solid #007AFF`, borderRadius:8, fontSize:12, color:C.ink, outline:"none", fontFamily:"inherit", boxSizing:"border-box" }}/>
+                        <button onClick={addParticipant}
+                          style={{ padding:"7px 13px", background:C.ink, color:"#fff", border:"none", borderRadius:8, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                          Add
+                        </button>
+                        <button onClick={() => { setShowAddParticipant(false); setNewParticipantName(""); }}
+                          style={{ padding:"7px 10px", background:C.warm, color:C.muted, border:"none", borderRadius:8, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {/* Messages */}
                   <div className="scrollbar-hide" style={{ flex:1, overflowY:"auto", padding:"16px 16px", display:"flex", flexDirection:"column", gap:1 }}>
@@ -23531,25 +23620,40 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                       </div>
                     )}
                     {grouped.map((m, i) => {
-                      const isMe = m.from === "studio";
-                      const senderDisplay = isMe ? (m.senderName || myDisplayName) : (m.senderName || sel.name);
+                      const fromStudio = m.from === "studio";
+                      const isMe = fromStudio;
+                      const senderDisplay = fromStudio ? (m.senderName || myDisplayName) : (m.senderName || sel.name);
+                      const senderColor = fromStudio ? "#636366" : colorFor(senderDisplay);
                       const showName = !isMe && m.isFirst;
+                      const showAvatar = !isMe && m.isLast;
                       const showTime = m.isLast;
                       const timeStr = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : (m.time||"");
                       const br = { tl:18, tr:18, bl:18, br:18 };
                       if (isMe) br.br = m.isLast ? 4 : 18; else br.bl = m.isLast ? 4 : 18;
                       return (
                         <div key={m.id||i}>
-                          {showName && <p style={{ fontSize:11, color:C.muted, margin:"8px 0 3px 6px", fontWeight:600 }}>{senderDisplay}</p>}
-                          <div style={{ display:"flex", justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
+                          {showName && (
+                            <p style={{ fontSize:11, color:senderColor, fontWeight:700, margin:"10px 0 3px 38px" }}>
+                              {senderDisplay}
+                            </p>
+                          )}
+                          <div style={{ display:"flex", alignItems:"flex-end", gap:6, justifyContent:isMe?"flex-end":"flex-start", marginBottom:1 }}>
+                            <div style={{ width:28, flexShrink:0, visibility:!isMe?"visible":"hidden" }}>
+                              {showAvatar && (
+                                <div style={{ width:28, height:28, borderRadius:"50%", background:senderColor, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700 }}>
+                                  {initials2(senderDisplay)}
+                                </div>
+                              )}
+                            </div>
                             <div style={{ maxWidth:"70%", padding:"10px 13px", fontSize:14, lineHeight:1.5,
                               borderRadius:`${br.tl}px ${br.tr}px ${br.br}px ${br.bl}px`,
                               background: isMe ? "#007AFF" : "#E9E9EB", color: isMe ? "#fff" : "#000" }}>
                               {m.text}
                             </div>
+                            {isMe && <div style={{ width:28, flexShrink:0 }}/>}
                           </div>
                           {showTime && (
-                            <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left" }}>
+                            <p style={{ fontSize:10, color:C.muted, margin:"2px 0 8px", textAlign:isMe?"right":"left", paddingRight:isMe?34:0, paddingLeft:isMe?0:38 }}>
                               {senderDisplay}{isMe ? " (you)" : ""} · {timeStr}
                             </p>
                           )}
@@ -23563,7 +23667,7 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                       <div style={{ flex:1, display:"flex", alignItems:"center", background:"#fff", border:"1.5px solid #c7c7cc", borderRadius:22, padding:"8px 14px" }}>
                         <input value={chatDraft} onChange={e=>setChatDraft(e.target.value)}
                           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }}}
-                          placeholder={`Message ${sel.name.split(" ")[0]} privately…`}
+                          placeholder={`Message ${sel.name.split(" ")[0]} & ${chatContacts.length} other${chatContacts.length===1?"":"s"} as ${myDisplayName}…`.replace("0 others","").replace("Message X & 0 others as","Message X privately as")}
                           style={{ flex:1, background:"transparent", border:"none", fontSize:14, color:C.ink, outline:"none", fontFamily:"inherit" }}/>
                       </div>
                       <button onClick={sendChat} disabled={!chatDraft.trim() || chatSending}
@@ -23571,7 +23675,9 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                       </button>
                     </div>
-                    <p style={{ fontSize:10, color:C.muted, margin:"6px 4px 0", textAlign:"center" }}>This chat is paired with {sel.name}'s portal under Messages → General chat. They'll see your replies the next time they open the portal.</p>
+                    <p style={{ fontSize:10, color:C.muted, margin:"6px 4px 0", textAlign:"center" }}>
+                      This chat is paired with {sel.name}'s portal → Messages → General chat. {chatContacts.length > 0 ? `Each participant has their own copy-link above to join in.` : ""}
+                    </p>
                   </div>
                 </div>
               );

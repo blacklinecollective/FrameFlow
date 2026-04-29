@@ -540,11 +540,17 @@ export default function ClientPortalPage({ params }) {
   // even if two users happen to share a project ID. Falls back to the
   // server's heuristic when missing (older links keep working).
   const ownerUserIdRef = useRef(null);
+  // Optional ?general=<slug> override — when present, the General chat
+  // uses this as its thread key instead of the visitor's identity slug.
+  // Lets the photographer add a third party to a CRM client's general
+  // chat by sharing them a per-contact link with both ?as= and ?general=.
+  const generalKeyRef = useRef(null);
   if (typeof window !== "undefined" && ownerUserIdRef.current === null) {
     try {
       const p = new URLSearchParams(window.location.search || "");
       ownerUserIdRef.current = p.get("owner") || undefined;
-    } catch(_) { ownerUserIdRef.current = undefined; }
+      generalKeyRef.current  = p.get("general") || null;
+    } catch(_) { ownerUserIdRef.current = undefined; generalKeyRef.current = null; }
   }
 
   useEffect(() => {
@@ -655,6 +661,10 @@ export default function ClientPortalPage({ params }) {
   useEffect(() => {
     if (tab !== "messages" || messagesSubTab !== "general") return;
     if (!identity?.name || !projectId) return;
+    // Chat key: ?general=<slug> from the URL takes precedence (lets a third
+    // party join an existing client's general chat). Otherwise the visitor's
+    // own identity name is the key.
+    const chatKey = generalKeyRef.current || identity.name;
     let cancelled = false;
     const fetchOnce = async () => {
       try {
@@ -662,7 +672,7 @@ export default function ClientPortalPage({ params }) {
         if (!sb) return;
         const { data: arr } = await sb.rpc("get_general_messages", {
           p_project_id:    Number(projectId),
-          p_contact_name:  identity.name,
+          p_contact_name:  chatKey,
           p_owner_user_id: ownerUserIdRef.current || null,
         });
         if (cancelled) return;
@@ -979,7 +989,9 @@ export default function ClientPortalPage({ params }) {
         await sb.rpc("send_general_message", {
           p_project_id:    Number(projectId),
           p_message:       msg,
-          p_contact_name:  identity.name,
+          // Use the URL's chat key when present so third-party participants
+          // post into the right CRM client's thread, not their own.
+          p_contact_name:  generalKeyRef.current || identity.name,
           p_owner_user_id: ownerUserIdRef.current || null,
         });
       }
