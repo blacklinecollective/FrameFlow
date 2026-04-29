@@ -5307,7 +5307,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
   const [justCopiedId,   setJustCopiedId]   = useState(null); // contact whose link was just copied (for inline button feedback)
   const [copiedPortalLink, setCopiedPortalLink] = useState(false); // green-flash on the project header's Copy button
   const [projContacts, setProjContacts] = useState({});
-  const blankContact = { name:"", role:"", email:"", phone:"", type:"client" };
+  const blankContact = { name:"", role:"", email:"", phone:"", type:"client", address: { line1:"", line2:"", city:"", state:"", zip:"", country:"" } };
   const [newContact, setNewContact] = useState(blankContact);
   const [editingContact, setEditingContact] = useState(null); // contact object being edited
   // projChecklists / projTimeLogs are now lifted to AppShell (see top-level state).
@@ -6155,6 +6155,27 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                       </div>
                     ))}
                   </div>
+                  {/* Address — same shape as the Add Contact form. */}
+                  <p style={{ fontSize:10, color:C.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:6, fontWeight:600 }}>Address (optional)</p>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                    <input placeholder="Address line 1" value={editingContact.address?.line1 || ""}
+                      onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), line1: e.target.value}}))}
+                      style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    <input placeholder="Apt, suite, etc. (optional)" value={editingContact.address?.line2 || ""}
+                      onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), line2: e.target.value}}))}
+                      style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    <input placeholder="City" value={editingContact.address?.city || ""}
+                      onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), city: e.target.value}}))}
+                      style={{ padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <input placeholder="State" value={editingContact.address?.state || ""}
+                        onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), state: e.target.value}}))}
+                        style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                      <input placeholder="ZIP" value={editingContact.address?.zip || ""}
+                        onChange={e => setEditingContact(prev => ({...prev, address: {...(prev.address||{}), zip: e.target.value}}))}
+                        style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    </div>
+                  </div>
                   <div style={{ marginBottom:18 }}>
                     <p style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.3, marginBottom:5 }}>Type</p>
                     <select
@@ -6210,6 +6231,27 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                       />
                     </div>
                   ))}
+                </div>
+                {/* Address — used on invoices' "Bill to" section. */}
+                <p style={{ fontSize:10, color:C.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:6, fontWeight:600 }}>Address (optional)</p>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                  <input placeholder="Address line 1" value={newContact.address?.line1 || ""}
+                    onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), line1: e.target.value}}))}
+                    style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                  <input placeholder="Apt, suite, etc. (optional)" value={newContact.address?.line2 || ""}
+                    onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), line2: e.target.value}}))}
+                    style={{ gridColumn:"1 / -1", padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                  <input placeholder="City" value={newContact.address?.city || ""}
+                    onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), city: e.target.value}}))}
+                    style={{ padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <input placeholder="State" value={newContact.address?.state || ""}
+                      onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), state: e.target.value}}))}
+                      style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                    <input placeholder="ZIP" value={newContact.address?.zip || ""}
+                      onChange={e => setNewContact(prev => ({...prev, address: {...(prev.address||{}), zip: e.target.value}}))}
+                      style={{ flex:1, padding:"9px 12px", background:C.cream, border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                  </div>
                 </div>
                 <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                   <select
