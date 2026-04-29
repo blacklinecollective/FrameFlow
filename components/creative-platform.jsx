@@ -5258,7 +5258,16 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
   const [editForm,         setEditForm]         = useState({});
 
   const openEditModal = (p) => {
-    setEditForm({ name:p.name, client:p.client, type:p.type, status:p.status, due:p.due, budget:p.budget });
+    // Pull existing Home customization from galleryDelivery so the photographer
+    // sees the current values when they open Edit (and can tweak them in the
+    // same place as the rest of the project info).
+    const d = (galleryDelivery && galleryDelivery[p.id]) || {};
+    setEditForm({
+      name: p.name, client: p.client, type: p.type, status: p.status, due: p.due, budget: p.budget,
+      homeGreeting:       d.homeGreeting       || "",
+      homeClientName:     d.homeClientName     || "",
+      homeWelcomeMessage: d.homeWelcomeMessage || "",
+    });
     setShowEditModal(true);
   };
   const saveEditModal = () => {
@@ -5267,7 +5276,21 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
     const prevStatus = prevProj.status;
     const statusChanged = newStatus && newStatus !== prevStatus;
 
-    setProjOverrides(prev => ({ ...prev, [sel]: { ...prev[sel], ...editForm } }));
+    // Project-level fields → projOverrides (existing). Home customization
+    // fields → galleryDelivery so the public portal picks them up via RPC.
+    const { homeGreeting, homeClientName, homeWelcomeMessage, ...projFields } = editForm;
+    setProjOverrides(prev => ({ ...prev, [sel]: { ...prev[sel], ...projFields } }));
+    if (setGalleryDelivery) {
+      setGalleryDelivery(prev => ({
+        ...(prev || {}),
+        [sel]: {
+          ...((prev || {})[sel] || {}),
+          homeGreeting:       (homeGreeting       || "").trim(),
+          homeClientName:     (homeClientName     || "").trim(),
+          homeWelcomeMessage: (homeWelcomeMessage || "").trim(),
+        },
+      }));
+    }
     setShowEditModal(false);
 
     // ── Form Rules: auto-send forms when status changes ──
@@ -5727,6 +5750,44 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                   <input type="number" value={editForm.budget || ""} onChange={e => setEditForm(f => ({...f, budget: Number(e.target.value)}))}
                     placeholder="e.g. 4200"
                     style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", fontFamily:"inherit", outline:"none" }}/>
+                </div>
+              </div>
+
+              {/* ── Client Portal Home customization ─────────────────────
+                  Replaces / overrides the auto greeting on the public
+                  Home tab. Empty fields fall back to the auto behavior
+                  (time-of-day greeting + identity name + default copy). */}
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:18, marginTop:6 }}>
+                <p style={{ fontSize:12, fontWeight:700, color:C.ink, margin:"0 0 4px", display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ width:7, height:7, borderRadius:99, background:C.accent, display:"inline-block" }}/>
+                  Client Portal Home
+                </p>
+                <p style={{ fontSize:11, color:C.muted, margin:"0 0 12px", lineHeight:1.5 }}>
+                  These appear on the Home tab of <strong>{editForm.client || "the client"}</strong>'s portal. Leave blank to use the auto greeting + default welcome copy.
+                </p>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+                  <div>
+                    <label style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:.4, color:C.muted, display:"block", marginBottom:5 }}>Greeting line</label>
+                    <input value={editForm.homeGreeting || ""}
+                      onChange={e => setEditForm(f => ({...f, homeGreeting: e.target.value}))}
+                      placeholder='e.g. "Welcome back, the Johnsons!"'
+                      style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", fontFamily:"inherit", outline:"none" }}/>
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:.4, color:C.muted, display:"block", marginBottom:5 }}>Client name shown</label>
+                    <input value={editForm.homeClientName || ""}
+                      onChange={e => setEditForm(f => ({...f, homeClientName: e.target.value}))}
+                      placeholder='e.g. "Mike & Kelly"'
+                      style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", fontFamily:"inherit", outline:"none" }}/>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:.4, color:C.muted, display:"block", marginBottom:5 }}>Welcome message</label>
+                  <textarea value={editForm.homeWelcomeMessage || ""}
+                    onChange={e => setEditForm(f => ({...f, homeWelcomeMessage: e.target.value}))}
+                    placeholder='e.g. "So glad to share these with you. Take your time browsing — favorites are saved as you click them."'
+                    rows={3}
+                    style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", fontFamily:"inherit", outline:"none", resize:"vertical", lineHeight:1.5 }}/>
                 </div>
               </div>
             </div>
@@ -26321,10 +26382,15 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
       },
     }));
     setShowHomeEdit(false);
-    // Flush + reload the iframe so the new values render immediately.
-    if (saveNow) { try { await saveNow(); } catch(_) {} }
-    setReady(false);
-    setIframeKey(k => k + 1);
+    // Defer saveNow + iframe refresh: setGalleryDelivery just scheduled a
+    // re-render and AppShell's _liveState.current only picks up the new
+    // values during render. If we flush right now, saveNow() reads the
+    // OLD ref and writes stale data — exactly why edits weren't sticking.
+    setTimeout(async () => {
+      if (saveNow) { try { await saveNow(); } catch(_) {} }
+      setReady(false);
+      setIframeKey(k => k + 1);
+    }, 80);
   };
   const resetHomeEdits = () => {
     setHomeForm({ homeGreeting:"", homeWelcomeMessage:"", homeClientName:"" });
