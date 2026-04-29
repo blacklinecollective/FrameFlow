@@ -26284,10 +26284,12 @@ const ClientPortal = ({ projId, onBack, brandKit, availability, bookings, onBook
 // sees EXACTLY what the client sees at the shared link. Before mounting we flush
 // any pending in-memory writes via saveNow() so the iframe loads the freshest
 // data from app_state.
-function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId }) {
+function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, onSelectProject }) {
   const [iframeKey, setIframeKey] = useState(0);
   const [ready,     setReady]     = useState(false);
   const [justCopied, setJustCopied] = useState(false);
+  const projectList = Array.isArray(projects) ? projects : [];
+  const currentProj = projectList.find(p => p.id === projId);
   // Flush pending saves before the iframe loads the data via RPC.
   useEffect(() => {
     let cancelled = false;
@@ -26313,6 +26315,21 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId }) {
           <span style={{ fontSize:13, fontWeight:600 }}>Client Portal Preview</span>
           <span style={{ fontSize:10, color:"rgba(245,242,238,.55)" }}>This is exactly what your client sees at the shared link</span>
         </div>
+        {/* Project switcher — lets the photographer flip between portals
+            without leaving the preview. Only renders when we have projects. */}
+        {projectList.length > 0 && onSelectProject && (
+          <select value={projId || ""}
+            onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v)) onSelectProject(v); }}
+            title="Switch project"
+            style={{ background:"rgba(255,255,255,.08)", color:"#f5f2ee", border:"1px solid rgba(255,255,255,.15)", padding:"5px 10px", borderRadius:7, fontSize:11, fontFamily:"inherit", cursor:"pointer", maxWidth:240, textOverflow:"ellipsis" }}>
+            {!currentProj && <option value="" disabled>Select a project…</option>}
+            {projectList.map(p => (
+              <option key={p.id} value={p.id} style={{ color:"#000" }}>
+                {p.name}{p.client ? ` — ${p.client}` : ""}
+              </option>
+            ))}
+          </select>
+        )}
         <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
           <code
             onClick={async () => {
@@ -26689,7 +26706,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
     brandkit:    <BrandKitPage brandKit={brandKit} setBrandKit={setBrandKit}/>,
-    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id}/>,
+    portal:      <ClientPortalPreview projId={portalProjId} onBack={() => goBack()} saveNow={saveNow} ownerUserId={supabaseSession?.user?.id} projects={appProjects} onSelectProject={(pid) => setPortalProjId(pid)}/>,
     account:   <AccountSettings setPage={setPage} supabaseSession={supabaseSession} supabaseClient={supabaseClient} setBrandKit={setBrandKit} onBeforeSignOut={saveNow}/>,
   };
 
@@ -26894,7 +26911,15 @@ function AppShell({ supabaseSession, supabaseClient }) {
         {/* Client + Team Portal quick-switch */}
         <div style={{ padding: isTablet?"6px 8px":"6px 10px", display:"flex", flexDirection:"column", gap:4 }}>
           <div style={{ display:"flex", gap:4 }}>
-            <button onClick={() => setShowClientLogin(true)}
+            <button onClick={() => {
+                // Open the same per-project portal iframe used everywhere
+                // else. Default to whichever project's portal was last
+                // viewed (portalProjId persists in localStorage); fall back
+                // to the first project on the account.
+                const target = portalProjId || appProjects?.[0]?.id;
+                if (target) setPortalProjId(target);
+                setPage("portal");
+              }}
               title={isTablet?"Client Portal":undefined}
               style={{ flex:1, display:"flex", alignItems:"center", gap:8, padding: isTablet?"8px 0":"8px 10px", justifyContent: isTablet?"center":"flex-start", background:"rgba(200,169,126,.18)", border:"none", borderRadius:9, cursor:"pointer", color:C.accent, fontSize:12, fontWeight:600 }}>
               <Ic d={P.eye} size={14} style={{ color:C.accent, flexShrink:0 }}/>
