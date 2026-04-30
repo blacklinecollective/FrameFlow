@@ -27846,13 +27846,35 @@ function AppShell({ supabaseSession, supabaseClient }) {
   // (so we don't lose work to the 1.5s debounce when they switch tabs or
   // log out within that window). An optional `override` patch lets the
   // caller pass freshly-computed slices that React hasn't committed yet.
+  //
+  // CRITICAL: refuse to write before dbLoaded is true, OR if a non-override
+  // call would push our default in-memory seed state. Without this guard
+  // every component that calls saveNow() during the brief window between
+  // mount and the app_state.select() returning will overwrite the user's
+  // saved row with empty defaults — which is exactly how an entire account
+  // got wiped at one point. We DO allow override-only writes (where the
+  // caller passes specifically what they want saved, like a single
+  // invoice), but only ever merged with _liveState — never ALL of it
+  // until hydration is confirmed.
   const saveNow = useCallback((override) => {
     if (!userId) return Promise.resolve();
+    if (!dbLoaded && !override) {
+      // No override, no hydrated state yet → silently skip. Saving the
+      // default seed would clobber whatever's in Supabase.
+      console.warn("[saveNow] skipped — dbLoaded is false and no override patch provided");
+      return Promise.resolve();
+    }
+    if (!dbLoaded && override) {
+      // Override-only write before hydration. Patch JUST the override
+      // fields, never any other slice that might still be at defaults.
+      // Use a partial upsert by sending only override + user_id.
+      return _saveState(userId, override);
+    }
     const patch = override
       ? { ..._liveState.current, ...override }
       : _liveState.current;
     return _saveState(userId, patch);
-  }, [userId]);
+  }, [userId, dbLoaded]);
 
   // Called by ProjectGalleryTab the moment a file gets a permanent Supabase URL.
   // We receive the exact computed photos array (captured from the functional setState
