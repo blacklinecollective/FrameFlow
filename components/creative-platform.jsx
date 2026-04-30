@@ -5529,6 +5529,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
     const d = (galleryDelivery && galleryDelivery[p.id]) || {};
     setEditForm({
       name: p.name, client: p.client, type: p.type, status: p.status, due: p.due, budget: p.budget,
+      cover: p.cover || COVER_COLORS[0],
       homeGreeting:       d.homeGreeting       || "",
       homeClientName:     d.homeClientName     || "",
       homeWelcomeMessage: d.homeWelcomeMessage || "",
@@ -5541,10 +5542,14 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
     const prevStatus = prevProj.status;
     const statusChanged = newStatus && newStatus !== prevStatus;
 
-    // Project-level fields → projOverrides (existing). Home customization
+    // Project-level fields → projOverrides AND appProjects (so they
+    // persist to Supabase via the AppShell auto-save). Home customization
     // fields → galleryDelivery so the public portal picks them up via RPC.
     const { homeGreeting, homeClientName, homeWelcomeMessage, ...projFields } = editForm;
     setProjOverrides(prev => ({ ...prev, [sel]: { ...prev[sel], ...projFields } }));
+    if (setAppProjects) {
+      setAppProjects(prev => prev.map(p => p.id === sel ? { ...p, ...projFields } : p));
+    }
     if (setGalleryDelivery) {
       setGalleryDelivery(prev => ({
         ...(prev || {}),
@@ -6025,6 +6030,60 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
                     placeholder="e.g. 4200"
                     style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:13, color:C.ink, background:C.cream, boxSizing:"border-box", fontFamily:"inherit", outline:"none" }}/>
                 </div>
+              </div>
+
+              {/* ── Cover color picker ──────────────────────────────────
+                  6 preset gradients (matches the new-project picker)
+                  plus a custom color input that builds a fresh gradient. */}
+              <div>
+                <label style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:.4, color:C.muted, display:"block", marginBottom:8 }}>Cover Color</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {COVER_COLORS.map((g,i) => {
+                    const selected = editForm.cover === g;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setEditForm(f => ({ ...f, cover: g }))}
+                        title="Use this color"
+                        style={{
+                          width:46, height:46, borderRadius:11, background:g,
+                          border: selected ? `3px solid ${C.ink}` : `2px solid ${C.border}`,
+                          padding:0, cursor:"pointer",
+                          boxShadow: selected ? "0 2px 8px rgba(0,0,0,.18)" : "none",
+                          transition:"transform .12s, border-color .12s",
+                          flexShrink:0,
+                        }}/>
+                    );
+                  })}
+                  {/* Custom color picker — builds a gradient from a single hex */}
+                  <label
+                    title="Pick any color"
+                    style={{
+                      width:46, height:46, borderRadius:11,
+                      border: `2px dashed ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center",
+                      cursor:"pointer", color:C.muted, fontSize:18, position:"relative", overflow:"hidden", flexShrink:0,
+                      background: editForm.cover && !COVER_COLORS.includes(editForm.cover) ? editForm.cover : "transparent",
+                    }}>
+                    {(!editForm.cover || COVER_COLORS.includes(editForm.cover)) && "+"}
+                    <input
+                      type="color"
+                      onChange={(e) => {
+                        const hex = e.target.value;
+                        // Build a darker shade for the gradient endpoint.
+                        const darker = (() => {
+                          const r = parseInt(hex.slice(1,3),16);
+                          const g = parseInt(hex.slice(3,5),16);
+                          const b = parseInt(hex.slice(5,7),16);
+                          const f = (n)=>Math.max(0,Math.round(n*0.65)).toString(16).padStart(2,"0");
+                          return `#${f(r)}${f(g)}${f(b)}`;
+                        })();
+                        setEditForm(f => ({ ...f, cover: `linear-gradient(135deg,${hex},${darker})` }));
+                      }}
+                      style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer", border:"none", padding:0 }}/>
+                  </label>
+                </div>
+                <p style={{ fontSize:11, color:C.muted, margin:"6px 0 0" }}>Pick a preset or use the &ldquo;+&rdquo; tile for any custom color.</p>
               </div>
 
               {/* ── Client Portal Home customization ─────────────────────
