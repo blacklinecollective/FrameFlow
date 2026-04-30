@@ -20036,8 +20036,102 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
   const [socialCopied, setSocialCopied] = useState(null);
   const [storagePlan,  setStoragePlan]  = useState("250gb"); // current base plan
   const [storageAdded, setStorageAdded] = useState(false);   // purchase feedback
-  const [stripeConnected, setStripeConnected] = useState(false);
+  // Stripe Connect status — sourced from brand_kit on app_state so it
+  // persists across logout. The onboarding endpoint sets stripeAccountId
+  // and we ping /api/stripe/account-status to know when charges are
+  // actually enabled.
+  const [stripeConnected, setStripeConnected]   = useState(!!brandKit?.stripeChargesEnabled);
   const [stripeOnboarding, setStripeOnboarding] = useState(false);
+  const [stripeError,      setStripeError]      = useState("");
+  // Re-hydrate when brandKit prop arrives.
+  useEffect(() => {
+    setStripeConnected(!!brandKit?.stripeChargesEnabled);
+  }, [brandKit?.stripeChargesEnabled]);
+
+  // Kick off (or resume) Stripe Connect onboarding.
+  const startStripeOnboarding = async () => {
+    setStripeError("");
+    setStripeOnboarding(true);
+    try {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetch("/api/stripe/onboard", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          existingAccountId: brandKit?.stripeAccountId || null,
+          email:             sessionUser?.email || undefined,
+          returnUrl:  `${origin}/?stripe_return=1#account`,
+          refreshUrl: `${origin}/?stripe_refresh=1#account`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Onboarding failed.");
+      // Persist the brand-new account ID so we can resume / check status later.
+      if (setBrandKit && data.accountId) {
+        setBrandKit(prev => ({ ...(prev || {}), stripeAccountId: data.accountId }));
+      }
+      // Redirect — Stripe will send the user back to returnUrl on completion.
+      window.location.href = data.url;
+    } catch (err) {
+      console.error(err);
+      setStripeError(err.message || "Could not start Stripe onboarding.");
+      setStripeOnboarding(false);
+    }
+  };
+
+  // Refresh charges_enabled / payouts_enabled from Stripe.
+  const refreshStripeStatus = async () => {
+    if (!brandKit?.stripeAccountId) return;
+    try {
+      const res = await fetch("/api/stripe/account-status", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: brandKit.stripeAccountId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (setBrandKit) {
+          setBrandKit(prev => ({
+            ...(prev || {}),
+            stripeChargesEnabled:    !!data.chargesEnabled,
+            stripePayoutsEnabled:    !!data.payoutsEnabled,
+            stripeDetailsSubmitted:  !!data.detailsSubmitted,
+          }));
+        }
+        setStripeConnected(!!data.chargesEnabled);
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  // On mount: if user just returned from Stripe, refresh their status.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("stripe_return") || params.has("stripe_refresh")) {
+      refreshStripeStatus();
+      // Clean up the URL.
+      const url = new URL(window.location.href);
+      url.searchParams.delete("stripe_return");
+      url.searchParams.delete("stripe_refresh");
+      window.history.replaceState({}, "", url.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandKit?.stripeAccountId]);
+
+  const disconnectStripe = () => {
+    if (!window.confirm("Disconnect Stripe? You won't be able to receive payments until you reconnect.")) return;
+    if (setBrandKit) {
+      setBrandKit(prev => ({
+        ...(prev || {}),
+        stripeAccountId:        null,
+        stripeChargesEnabled:   false,
+        stripePayoutsEnabled:   false,
+        stripeDetailsSubmitted: false,
+      }));
+    }
+    setStripeConnected(false);
+    setStripeOnboarding(false);
+  };
   const [payoutSchedule, setPayoutSchedule] = useState("weekly");
   const PAYOUT_HISTORY = [];
 
@@ -20625,22 +20719,30 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                         </div>
                       ))}
                     </div>
-                    {!stripeOnboarding ? (
-                      <button onClick={() => setStripeOnboarding(true)}
-                        style={{ padding:"11px 26px", background:"linear-gradient(135deg,#6772e5,#9c6fe4)", color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:600, cursor:"pointer" }}>
-                        Set Up Payouts with Stripe →
+                    {brandKit?.stripeAccountId && !brandKit?.stripeChargesEnabled && (
+                      <p style={{ fontSize:12, color:"#9e7850", margin:"0 0 10px" }}>
+                        Onboarding started but not complete. Continue where you left off →
+                      </p>
+                    )}
+                    <button
+                      onClick={startStripeOnboarding}
+                      disabled={stripeOnboarding}
+                      style={{ padding:"11px 26px", background:"linear-gradient(135deg,#6772e5,#9c6fe4)", color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:600, cursor: stripeOnboarding ? "wait" : "pointer", opacity: stripeOnboarding ? 0.7 : 1 }}>
+                      {stripeOnboarding
+                        ? "Redirecting to Stripe…"
+                        : brandKit?.stripeAccountId
+                          ? "Continue Stripe Onboarding →"
+                          : "Set Up Payouts with Stripe →"}
+                    </button>
+                    {brandKit?.stripeAccountId && (
+                      <button
+                        onClick={refreshStripeStatus}
+                        style={{ marginLeft:8, padding:"11px 18px", background:"#fff", color:C.muted, border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, fontWeight:500, cursor:"pointer" }}>
+                        Refresh status
                       </button>
-                    ) : (
-                      <div style={{ background:"linear-gradient(135deg,#eef0ff,#f5eeff)", borderRadius:12, padding:20, border:"1px solid #c7d0ff" }}>
-                        <p style={{ fontSize:13, fontWeight:600, color:"#4a3fa0", margin:"0 0 8px" }}>Stripe Onboarding</p>
-                        <p style={{ fontSize:12, color:"#6b65b5", lineHeight:1.6, marginBottom:14 }}>
-                          In the live version, you'd be redirected to Stripe to verify your identity and connect your bank. This takes about 5 minutes.
-                        </p>
-                        <button onClick={() => setStripeConnected(true)}
-                          style={{ padding:"9px 20px", background:"#6772e5", color:"#fff", border:"none", borderRadius:9, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-                          Simulate Connection ✓
-                        </button>
-                      </div>
+                    )}
+                    {stripeError && (
+                      <p style={{ fontSize:12, color:C.red, margin:"10px 0 0" }}>{stripeError}</p>
                     )}
                   </div>
                 </div>
@@ -20656,13 +20758,21 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                       </div>
                       <div>
                         <p style={{ fontSize:14, fontWeight:600, color:"#065f46", margin:0 }}>Stripe Connected</p>
-                        <p style={{ fontSize:12, color:"#047857", margin:"2px 0 0" }}>Payments enabled · Chase Business ••4821</p>
+                        <p style={{ fontSize:12, color:"#047857", margin:"2px 0 0" }}>
+                          Payments enabled · Account {brandKit?.stripeAccountId ? brandKit.stripeAccountId.slice(-8) : ""}
+                        </p>
                       </div>
                     </div>
-                    <button onClick={() => setStripeConnected(false)}
-                      style={{ fontSize:12, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer" }}>
-                      Disconnect
-                    </button>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={refreshStripeStatus}
+                        style={{ fontSize:12, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer" }}>
+                        Refresh
+                      </button>
+                      <button onClick={disconnectStripe}
+                        style={{ fontSize:12, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer" }}>
+                        Disconnect
+                      </button>
+                    </div>
                   </div>
                 </Card>
 

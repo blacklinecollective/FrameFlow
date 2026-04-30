@@ -1718,9 +1718,45 @@ export default function ClientPortalPage({ params }) {
                   style={{ flex:1, padding:"12px 0", background:"none", border:`1px solid ${brd}`, borderRadius:11, fontSize:13, fontWeight:600, color:fg, cursor:"pointer" }}>
                   Cancel
                 </button>
-                <button disabled={paying || needsMethod} onClick={async () => {
+                <button disabled={paying} onClick={async () => {
                     setPaying(true);
                     try {
+                      // ── REAL PAYMENT PATH: Stripe Checkout ──
+                      // If the photographer has connected Stripe AND charges
+                      // are enabled, redirect the client to a hosted Stripe
+                      // Checkout session. Funds land in the photographer's
+                      // connected account. The webhook flips the invoice to
+                      // Paid in app_state asynchronously.
+                      const stripeAcct = brandKit?.stripeAccountId;
+                      const chargesOk  = !!brandKit?.stripeChargesEnabled;
+                      if (stripeAcct && chargesOk) {
+                        const amountCents = Math.round(Number(payModal.total || 0) * 100);
+                        if (amountCents < 50) throw new Error("Invoice total is below Stripe's $0.50 minimum.");
+                        const origin = window.location.origin;
+                        const successUrl = `${origin}${window.location.pathname}?paid=${encodeURIComponent(payModal.id)}${window.location.search ? "&" + window.location.search.slice(1) : ""}`;
+                        const cancelUrl  = `${origin}${window.location.pathname}${window.location.search}`;
+                        const res = await fetch("/api/stripe/checkout", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            connectedAccountId: stripeAcct,
+                            invoiceId:          payModal.id,
+                            amountCents,
+                            description:        payModal.title || payModal.description || `Invoice ${payModal.id}`,
+                            clientEmail:        identity?.email || undefined,
+                            successUrl,
+                            cancelUrl,
+                            applicationFeeCents: 0,
+                          }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok || !data.url) throw new Error(data.error || "Could not start payment.");
+                        window.location.href = data.url; // Stripe handles the rest.
+                        return;
+                      }
+                      // ── DEMO MODE FALLBACK ──
+                      // Photographer hasn't connected Stripe yet — flip the
+                      // invoice locally so the portal still feels functional.
                       const sb = sbRef.current;
                       if (sb) {
                         const paidAt = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
@@ -1734,13 +1770,12 @@ export default function ClientPortalPage({ params }) {
                       setPayDone(prev => ({ ...prev, [payModal.id]: true }));
                       setPayModal(null);
                     } catch(err) {
-                      // optimistic local update on RPC failure (demo mode tolerates this)
-                      setPayDone(prev => ({...prev,[payModal.id]:true}));
-                      setPayModal(null);
+                      console.error(err);
+                      window.alert(err.message || "Payment failed. Please try again or contact your photographer.");
                     } finally { setPaying(false); }
                   }}
-                  style={{ flex:2, padding:"12px 0", background:(paying||needsMethod)?"#ccc":brandColor, color:"#fff", border:"none", borderRadius:11, fontSize:13, fontWeight:700, cursor:(paying||needsMethod)?"not-allowed":"pointer", transition:"background .2s" }}>
-                  {paying ? "Processing…" : needsMethod ? "Add a payment method first" : `Pay $${Number(payModal.total || 0).toLocaleString()}`}
+                  style={{ flex:2, padding:"12px 0", background:paying?"#ccc":brandColor, color:"#fff", border:"none", borderRadius:11, fontSize:13, fontWeight:700, cursor:paying?"not-allowed":"pointer", transition:"background .2s" }}>
+                  {paying ? "Processing…" : `Pay $${Number(payModal.total || 0).toLocaleString()}`}
                 </button>
               </div>
             </div>
