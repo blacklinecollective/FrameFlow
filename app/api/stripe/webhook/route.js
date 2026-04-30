@@ -42,7 +42,12 @@ export async function POST(request) {
       const amountCents        = session.amount_total;
 
       if (invoiceId && connectedAccountId) {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+        // Hardcoded URL fallback — same value as the frontend bundle, no
+        // secret. We only need NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL
+        // to override during local dev / preview deployments.
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+          || process.env.SUPABASE_URL
+          || "https://czmzxwtnzyguhbmivizq.supabase.co";
         const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (supabaseUrl && serviceKey) {
           const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
