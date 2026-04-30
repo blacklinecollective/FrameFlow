@@ -15,11 +15,20 @@ export async function POST(request) {
     if (!accountId) return Response.json({ error: "accountId is required." }, { status: 400 });
 
     const a = await stripe.accounts.retrieve(accountId);
+    const req = a.requirements || {};
     return Response.json({
       chargesEnabled:    a.charges_enabled,
       payoutsEnabled:    a.payouts_enabled,
       detailsSubmitted:  a.details_submitted,
-      requirementsCount: (a.requirements?.currently_due || []).length,
+      requirementsCount: (req.currently_due || []).length,
+      requirements: {
+        currentlyDue:  req.currently_due || [],
+        eventuallyDue: req.eventually_due || [],
+        pastDue:       req.past_due || [],
+        disabledReason: req.disabled_reason || null,
+      },
+      // Direct link to this account in the Stripe dashboard for fast triage.
+      dashboardUrl: `https://dashboard.stripe.com/test/connect/accounts/${accountId}`,
     });
   } catch (err) {
     console.error("[stripe/account-status]", err);

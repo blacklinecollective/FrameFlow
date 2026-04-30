@@ -20079,6 +20079,11 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
     }
   };
 
+  // Latest diagnostic info from Stripe — exposed so the UI can show
+  // exactly what's blocking charges (e.g. "business_profile.url is
+  // required" or "verification.document is required").
+  const [stripeStatus, setStripeStatus] = useState(null);
+
   // Refresh charges_enabled / payouts_enabled from Stripe.
   const refreshStripeStatus = async () => {
     if (!brandKit?.stripeAccountId) return;
@@ -20090,6 +20095,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
       });
       const data = await res.json();
       if (res.ok) {
+        setStripeStatus(data);
         if (setBrandKit) {
           setBrandKit(prev => ({
             ...(prev || {}),
@@ -20720,9 +20726,30 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                       ))}
                     </div>
                     {brandKit?.stripeAccountId && !brandKit?.stripeChargesEnabled && (
-                      <p style={{ fontSize:12, color:"#9e7850", margin:"0 0 10px" }}>
-                        Onboarding started but not complete. Continue where you left off →
-                      </p>
+                      <div style={{ fontSize:12, color:"#9e7850", margin:"0 0 12px", padding:"10px 12px", background:"#fef9f2", borderRadius:8, border:"1px solid #f3e2c8" }}>
+                        <p style={{ margin:0, fontWeight:600 }}>Stripe needs more info before charges can be enabled.</p>
+                        {stripeStatus?.requirements?.currentlyDue?.length > 0 && (
+                          <>
+                            <p style={{ margin:"6px 0 4px", fontSize:11, color:"#7a5a30" }}>Currently required:</p>
+                            <ul style={{ margin:"0 0 0 16px", padding:0, fontSize:11, color:"#7a5a30", lineHeight:1.6 }}>
+                              {stripeStatus.requirements.currentlyDue.slice(0,8).map(r => (
+                                <li key={r}><code>{r}</code></li>
+                              ))}
+                              {stripeStatus.requirements.currentlyDue.length > 8 && <li>… and {stripeStatus.requirements.currentlyDue.length - 8} more</li>}
+                            </ul>
+                          </>
+                        )}
+                        {stripeStatus?.requirements?.disabledReason && (
+                          <p style={{ margin:"6px 0 0", fontSize:11, color:"#7a5a30" }}>Reason: <code>{stripeStatus.requirements.disabledReason}</code></p>
+                        )}
+                        {stripeStatus?.dashboardUrl && (
+                          <p style={{ margin:"8px 0 0", fontSize:11 }}>
+                            <a href={stripeStatus.dashboardUrl} target="_blank" rel="noopener" style={{ color:"#6772e5", fontWeight:600 }}>
+                              Open this account in the Stripe dashboard ↗
+                            </a>
+                          </p>
+                        )}
+                      </div>
                     )}
                     <button
                       onClick={startStripeOnboarding}
