@@ -4678,7 +4678,7 @@ const blankForm = () => ({
 const fmtDate = d => { if(!d) return "—"; const p=d.split("-"); return new Date(p[0],p[1]-1,p[2]).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"}); };
 const fmtMoney = n => isNaN(+n)||n===""?"—":"$" + (+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 
-const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmClients, supabaseSession }) => {
+const ProjectInvoiceTab = ({ proj, projInvoices, appInvoices, setAppInvoices, brandKit, crmClients, supabaseSession, saveNow }) => {
   const [view,    setView]    = useState("list");   // list | template | form | preview
   const [tmplId,  setTmplId]  = useState(null);
   // ── Pre-fill helper: stitch together studio info (brandKit + auth) and
@@ -4840,19 +4840,25 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
 
   const resetToList = () => { setView("list"); setTmplId(null); setSelInv(null); setSaved(false); setEmailSent(false); };
 
-  const saveInvoice = () => {
-    if (!setAppInvoices) return;
+  // Build the invoice object from current form/items state. Centralized so
+  // both the explicit Save Invoice click and the silent auto-save use the
+  // same shape — no risk of a partial write missing project/projId etc.
+  const buildInvObj = () => {
     const subtotalVal  = items.reduce((s,it) => s + (+(it.qty||0)) * (+(it.rate||0)), 0);
     const discAmtVal   = +(form.discount||0);
     const afterDiscVal = subtotalVal - discAmtVal;
     const taxAmtVal    = +(afterDiscVal * (+(form.taxRate||0)) / 100).toFixed(2);
     const depositAmtVal= +(form.depositPaid||0);
     const balanceDueVal= afterDiscVal + taxAmtVal - depositAmtVal;
-    const invObj = {
+    return {
       id:        form.invNum || `INV-${Date.now()}`,
-      project:   proj.name,
-      projId:    proj.id,
-      client:    form.clientName || proj.client || "",
+      // Always write null instead of relying on undefined being stripped by
+      // JSON.stringify — this way the project association is explicit and
+      // the projInvoices filter can distinguish "no project" from "project
+      // metadata accidentally lost during a render race."
+      project:   proj?.name || null,
+      projId:    proj?.id   || null,
+      client:    form.clientName || proj?.client || "",
       clientEmail: form.clientEmail || "",
       status:    "Pending",
       issued:    fmtDate(form.invDate),
@@ -4867,15 +4873,57 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
       memo:      form.notes,
       createdAt: new Date().toISOString(),
     };
-    setAppInvoices(prev => {
-      const existing = (prev||[]).findIndex(i => i.id === invObj.id);
-      if (existing >= 0) {
-        const updated = [...prev]; updated[existing] = invObj; return updated;
-      }
-      return [...(prev||[]), invObj];
-    });
+  };
+
+  // Apply an invoice to appInvoices (insert or update by id) and ALSO flush
+  // the write to Supabase immediately via saveNow — bypassing the 1.5s
+  // debounce so even rapid tab-switches or logouts don't lose the invoice.
+  const applyInvoice = (invObj) => {
+    if (!setAppInvoices) return;
+    const prev = appInvoices || [];
+    const existing = prev.findIndex(i => i.id === invObj.id);
+    const next = existing >= 0
+      ? prev.map((x,i) => i === existing ? invObj : x)
+      : [...prev, invObj];
+    setAppInvoices(next);
+    // Force-persist with the freshly-computed array (since React hasn't
+    // re-rendered yet, _liveState.current still has the old invoices).
+    if (saveNow) saveNow({ invoices: next });
+  };
+
+  const saveInvoice = () => {
+    if (!setAppInvoices) return;
+    applyInvoice(buildInvObj());
     setSaved(true);
   };
+
+  // ── AUTO-SAVE the invoice draft on every form/items change ──────────
+  // The user shouldn't have to remember to click "Save Invoice" — we keep
+  // their work persisted continuously so it survives tab switches and
+  // logout. We only start auto-saving once the user has picked a template
+  // and there's actually meaningful content to save.
+  const autoSaveSig = useRef("");
+  useEffect(() => {
+    if (!setAppInvoices) return;
+    if (view !== "form" && view !== "preview") return;
+    // Wait for at least a template + an invoice number before auto-saving.
+    if (!tmplId || !form.invNum) return;
+    // Don't auto-save an empty form — require at least one filled-in field.
+    const hasContent =
+      (form.clientName && form.clientName.trim()) ||
+      items.some(it => (it.desc && it.desc.trim()) || +(it.rate||0) > 0);
+    if (!hasContent) return;
+
+    const sig = JSON.stringify({ form, items });
+    if (sig === autoSaveSig.current) return;
+    autoSaveSig.current = sig;
+
+    const t = setTimeout(() => {
+      applyInvoice(buildInvObj());
+    }, 700); // brief debounce so we don't write on every keystroke
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, items, view, tmplId]);
 
   const emailInvoice = () => {
     setEmailing(true);
@@ -4966,7 +5014,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
           <button onClick={() => setView("template")} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>← Templates</button>
           <h2 style={{ fontSize:16, fontWeight:600, color:C.ink, margin:0 }}>{INV_TMPLS.find(t=>t.id===tmplId)?.label}</h2>
         </div>
-        <Btn icon="eye" onClick={() => setView("preview")}>Preview Invoice</Btn>
+        <Btn icon="eye" onClick={() => { saveInvoice(); setView("preview"); }}>Preview Invoice</Btn>
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 280px", gap:18, alignItems:"start" }}>
@@ -5138,7 +5186,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
               <span className="serif" style={{ fontSize:24, fontWeight:600, color:C.ink }}>{fmtMoney(balanceDue)}</span>
             </div>
           </Card>
-          <Btn icon="eye" style={{ width:"100%", justifyContent:"center", marginBottom:8 }} onClick={() => setView("preview")}>Preview & Print</Btn>
+          <Btn icon="eye" style={{ width:"100%", justifyContent:"center", marginBottom:8 }} onClick={() => { saveInvoice(); setView("preview"); }}>Preview & Print</Btn>
           <button onClick={() => { saveInvoice(); setView("preview"); }} style={{ width:"100%", padding:"10px 0", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:13, fontWeight:500, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
             <Ic d={P.down} size={14} style={{ color:"#fff" }}/> Save Invoice
           </button>
@@ -5306,7 +5354,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, setAppInvoices, brandKit, crmCl
 };
 
 
-const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses, crmClients }) => {
+const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMembers, projectTeam, setProjectTeam, galleryDelivery, setGalleryDelivery, clientFavorites, clientFlags, formRules, sentForms, setSentForms, appProjects, setAppProjects, galleryPhotos, setGalleryPhotos, galleryFolders, setGalleryFolders, persistGalleryNow, appInvoices, setAppInvoices, appVideoDeliverables, setAppVideoDeliverables, appVideoComments, setAppVideoComments, brandKit, supabaseSession, projChecklists, setProjChecklists, projTimeLogs, setProjTimeLogs, projExpenses, setProjExpenses, crmClients, saveNow }) => {
   // Derive the photographer's real display name from their account
   const myName = supabaseSession?.user?.user_metadata?.full_name || brandKit?.studioName || "Studio";
   const projects = appProjects || [];
@@ -5587,7 +5635,17 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
 
   if (proj) {
     const msgThread = threads.find(m => m.project === proj.name);
-    const projInvoices = (appInvoices || []).filter(i => i.project === proj.name);
+    // Match invoices to this project by ANY of these signals — important
+    // because some legacy/auto-saved invoices were written without the
+    // project/projId metadata, and we still want them to appear here.
+    const _projClient = (proj.client || "").trim().toLowerCase();
+    const projInvoices = (appInvoices || []).filter(i => {
+      if (i.projId && proj.id && i.projId === proj.id) return true;
+      if (i.project && proj.name && i.project === proj.name) return true;
+      const ic = ((i.client || i.form?.clientName || "")+"").trim().toLowerCase();
+      if (_projClient && ic && ic === _projClient) return true;
+      return false;
+    });
     const projContracts = contracts.filter(c => c.project === proj.name);
     const photos = PHOTOS[proj.id] || [];
 
@@ -6859,7 +6917,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
         })()}
 
         {/* ── INVOICES ── */}
-        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} setAppInvoices={setAppInvoices} brandKit={brandKit} crmClients={crmClients} supabaseSession={supabaseSession}/>}
+        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} appInvoices={appInvoices} setAppInvoices={setAppInvoices} brandKit={brandKit} crmClients={crmClients} supabaseSession={supabaseSession} saveNow={saveNow}/>}
 
         {/* ── PROFITABILITY ── */}
         {tab === "profitability" && (
@@ -10626,7 +10684,7 @@ const FormsPage = ({ autoSentForms = [] }) => {
 };
 
 // ── Proposals & Service Packages ──────────────────────────────
-const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPackages, appProjects, crmClients, brandKit, supabaseSession }) => {
+const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPackages, appProjects, crmClients, brandKit, supabaseSession, saveNow }) => {
   const [proposals,  setProposals_local]  = useState([]);
   const [packages,   setPackages_local]   = useState(INITIAL_SERVICE_PACKAGES);
   const proposals_init = useRef(false);
@@ -10645,6 +10703,9 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
     setProposals_local(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       if (setAppProposals) setAppProposals(next);
+      // Force-flush to Supabase immediately so a tab switch or logout
+      // within the next 1.5s doesn't lose the new/edited proposal.
+      if (saveNow) saveNow({ proposals: next });
       return next;
     });
   };
@@ -10652,6 +10713,7 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
     setPackages_local(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       if (setAppPackages) setAppPackages(next);
+      if (saveNow) saveNow({ packages: next });
       return next;
     });
   };
@@ -12824,7 +12886,7 @@ const Analytics = () => {
   );
 };
 
-const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKit, supabaseSession }) => {
+const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKit, supabaseSession, saveNow }) => {
   const [tab, setTab] = useState("overview");
   const [expenses, setExpenses] = useState(EXPENSES);
   const [showAdd, setShowAdd] = useState(false);
@@ -12850,6 +12912,8 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKi
     setInvoices_local(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       if (setAppInvoices) setAppInvoices(next);
+      // Force-flush so tab switches / logouts in the next 1.5s don't drop work.
+      if (saveNow) saveNow({ invoices: next });
       return next;
     });
   };
@@ -27133,10 +27197,17 @@ function AppShell({ supabaseSession, supabaseClient }) {
     },
   };
 
-  // Immediate (non-debounced) save — used by logout handler
-  const saveNow = useCallback(() => {
+  // Immediate (non-debounced) save — used by logout handler and any flow
+  // that needs to flush a write the moment the user creates/edits a doc
+  // (so we don't lose work to the 1.5s debounce when they switch tabs or
+  // log out within that window). An optional `override` patch lets the
+  // caller pass freshly-computed slices that React hasn't committed yet.
+  const saveNow = useCallback((override) => {
     if (!userId) return Promise.resolve();
-    return _saveState(userId, _liveState.current);
+    const patch = override
+      ? { ..._liveState.current, ...override }
+      : _liveState.current;
+    return _saveState(userId, patch);
   }, [userId]);
 
   // Called by ProjectGalleryTab the moment a file gets a permanent Supabase URL.
@@ -27223,18 +27294,18 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients}/>,
+    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients} saveNow={saveNow}/>,
     clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
-    proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession}/>,
+    proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession} saveNow={saveNow}/>,
     forms:     <FormsPage autoSentForms={sentForms}/>,
     inbox:     <Inquiries emailTemplates={emailTemplates} brandKit={brandKit}/>,
     calendar:  <CalendarPage availability={availability} setAvailability={setAvailability} bookings={bookings} setBookings={setBookings} calEvents={calEvents} setCalEvents={setCalEvents}/>,
     design:    <DesignStudio/>,
     community: <Community commNotifs={commNotifs} setCommNotifs={setCommNotifs} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     analytics: <Analytics/>,
-    finance:   <Finance appInvoices={appInvoices} setAppInvoices={setAppInvoices} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession}/>,
+    finance:   <Finance appInvoices={appInvoices} setAppInvoices={setAppInvoices} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession} saveNow={saveNow}/>,
     website:   <WebsiteBuilder/>,
     storyboard:  <Storyboard appSbFrames={appSbFrames} setAppSbFrames={setAppSbFrames} appSbMedia={appSbMedia} setAppSbMedia={setAppSbMedia}/>,
     automations: <AutomationsPage emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} formRules={formRules} setFormRules={setFormRules}/>,
