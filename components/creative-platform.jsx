@@ -4930,6 +4930,39 @@ const ProjectInvoiceTab = ({ proj, projInvoices, appInvoices, setAppInvoices, br
     setTimeout(() => { setEmailing(false); setEmailSent(true); }, 1400);
   };
 
+  // ── Bulk selection / delete / duplicate (list view) ───────────────
+  const [invSelMode, setInvSelMode] = useState(false);
+  const [invSelSet,  setInvSelSet]  = useState(() => new Set());
+  const toggleInvSel = (id) => setInvSelSet(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const exitInvSelMode = () => { setInvSelMode(false); setInvSelSet(new Set()); };
+  const deleteSelectedInvoices = () => {
+    if (!invSelSet.size || !setAppInvoices) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${invSelSet.size} invoice${invSelSet.size===1?"":"s"}? This can't be undone.`)) return;
+    const ids = invSelSet;
+    const next = (appInvoices || []).filter(i => !ids.has(i.id));
+    setAppInvoices(next);
+    if (saveNow) saveNow({ invoices: next });
+    exitInvSelMode();
+  };
+  const duplicateInvoice = (inv) => {
+    if (!setAppInvoices) return;
+    const newId = `INV-${String(Date.now()).slice(-5)}-${Math.floor(Math.random()*99)}`;
+    const copy = {
+      ...inv,
+      id: newId,
+      status: "Pending",
+      createdAt: new Date().toISOString(),
+      form: inv.form ? { ...inv.form, invNum: newId } : inv.form,
+    };
+    const next = [...(appInvoices || []), copy];
+    setAppInvoices(next);
+    if (saveNow) saveNow({ invoices: next });
+  };
+
   // ── INPUT STYLE ──
   const inp = (extra={}) => ({
     width:"100%", padding:"8px 10px", border:`1px solid ${C.border}`,
@@ -4946,8 +4979,30 @@ const ProjectInvoiceTab = ({ proj, projInvoices, appInvoices, setAppInvoices, br
   // ── LIST VIEW ──
   if (view === "list") return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <div style={{ display:"flex", justifyContent:"flex-end" }}>
-        <Btn icon="plus" onClick={() => setView("template")}>Create Invoice</Btn>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+        {invSelMode ? (
+          <>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <button onClick={exitInvSelMode} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>Cancel</button>
+              <span style={{ fontSize:13, color:C.ink, fontWeight:500 }}>{invSelSet.size} selected</span>
+            </div>
+            <button
+              onClick={deleteSelectedInvoices}
+              disabled={invSelSet.size === 0}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", background:invSelSet.size ? "#c44" : "#fff", color:invSelSet.size ? "#fff" : C.muted, border:`1px solid ${invSelSet.size ? "#c44" : C.border}`, borderRadius:9, fontSize:13, fontWeight:500, cursor:invSelSet.size ? "pointer" : "not-allowed", opacity:invSelSet.size ? 1 : 0.6 }}>
+              Delete{invSelSet.size > 0 ? ` (${invSelSet.size})` : ""}
+            </button>
+          </>
+        ) : (
+          <>
+            <div>
+              {projInvoices.length > 0 && (
+                <button onClick={() => setInvSelMode(true)} style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:9, padding:"7px 14px", cursor:"pointer", color:C.ink, fontSize:13 }}>Select</button>
+              )}
+            </div>
+            <Btn icon="plus" onClick={() => setView("template")}>Create Invoice</Btn>
+          </>
+        )}
       </div>
       {projInvoices.length === 0 ? (
         <Card style={{ padding:52, textAlign:"center" }}>
@@ -4959,24 +5014,55 @@ const ProjectInvoiceTab = ({ proj, projInvoices, appInvoices, setAppInvoices, br
           <Btn icon="plus" onClick={() => setView("template")}>Create First Invoice</Btn>
         </Card>
       ) : (
-        projInvoices.map(inv => (
-          <Card key={inv.id} onClick={() => { setSelInv(inv.id); setView("preview"); }} style={{ padding:20, cursor:"pointer" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-              <div style={{ width:42, height:42, borderRadius:11, background:C.warm, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                <Ic d={P.file} size={18} style={{ color:C.muted }}/>
-              </div>
-              <div style={{ flex:1 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
-                  <span style={{ fontSize:13, fontFamily:"monospace", fontWeight:600, color:C.ink }}>{inv.id}</span>
-                  <Badge s={inv.status}/>
+        projInvoices.map(inv => {
+          const checked = invSelSet.has(inv.id);
+          const onCardClick = () => {
+            if (invSelMode) { toggleInvSel(inv.id); return; }
+            // Edit: load this invoice into the form for editing.
+            setForm({ ...(inv.form || {}), invNum: inv.id });
+            setItems((inv.items || []).length ? inv.items.map(x => ({ desc:x.desc||"", qty:x.qty||1, rate:x.rate||"" })) : [{desc:"",qty:1,rate:""}]);
+            setTmplId("photo"); // any template id so view==="form" works
+            setSelInv(inv.id);
+            setSaved(false);
+            setView("form");
+          };
+          return (
+            <Card key={inv.id} onClick={onCardClick} style={{ padding:20, cursor:"pointer", border: checked ? `2px solid ${C.ink}` : undefined }}>
+              <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                {invSelMode && (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => { e.stopPropagation(); toggleInvSel(inv.id); }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width:18, height:18, cursor:"pointer", flexShrink:0 }}
+                  />
+                )}
+                <div style={{ width:42, height:42, borderRadius:11, background:C.warm, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  <Ic d={P.file} size={18} style={{ color:C.muted }}/>
                 </div>
-                <p style={{ fontSize:13, color:C.ink, margin:0 }}>{inv.items[0].desc}</p>
-                <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>Due {inv.due}</p>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                    <span style={{ fontSize:13, fontFamily:"monospace", fontWeight:600, color:C.ink }}>{inv.id}</span>
+                    <Badge s={inv.status}/>
+                  </div>
+                  <p style={{ fontSize:13, color:C.ink, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{inv.items?.[0]?.desc || "—"}</p>
+                  <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>Due {inv.due}</p>
+                </div>
+                <p className="serif" style={{ fontSize:22, fontWeight:600, color:C.ink, whiteSpace:"nowrap" }}>${(+(inv.total ?? inv.items?.[0]?.rate ?? 0)).toLocaleString()}</p>
+                {!invSelMode && (
+                  <button
+                    title="Duplicate"
+                    onClick={(e) => { e.stopPropagation(); duplicateInvoice(inv); }}
+                    style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 8px", cursor:"pointer", color:C.muted, fontSize:11, flexShrink:0 }}
+                  >
+                    Duplicate
+                  </button>
+                )}
               </div>
-              <p className="serif" style={{ fontSize:22, fontWeight:600, color:C.ink }}>${inv.items[0].rate.toLocaleString()}</p>
-            </div>
-          </Card>
-        ))
+            </Card>
+          );
+        })
       )}
     </div>
   );
@@ -8679,6 +8765,36 @@ const Contracts = () => {
 
   const sf = (k, v) => setFields(prev => ({ ...prev, [k]: v }));
 
+  // ── Bulk select / delete / duplicate (Contracts list) ────────
+  const [contSelMode, setContSelMode] = useState(false);
+  const [contSelSet,  setContSelSet]  = useState(() => new Set());
+  const toggleContSel = (id) => setContSelSet(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const exitContSelMode = () => { setContSelMode(false); setContSelSet(new Set()); };
+  const deleteSelectedContracts = () => {
+    if (!contSelSet.size) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${contSelSet.size} contract${contSelSet.size===1?"":"s"}? This can't be undone.`)) return;
+    const ids = contSelSet;
+    setContracts(prev => (prev || []).filter(c => !ids.has(c.id)));
+    exitContSelMode();
+  };
+  const duplicateContract = (c) => {
+    const newId = `CT-${String(Date.now()).slice(-5)}-${Math.floor(Math.random()*99)}`;
+    const copy = {
+      ...c,
+      id: newId,
+      title: (c.title || "") + " (Copy)",
+      status: "Draft",
+      signature: null,
+      signedDate: null,
+      created: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+    };
+    setContracts(prev => [...(prev || []), copy]);
+  };
+
   const statusColors = {
     "Signed":  { bg:"#edf0ec", color:"#5c7a68", border:"#c3ccc0" },
     "Sent":    { bg:"#f4ede3", color:"#9e7850", border:"#d9c9b0" },
@@ -8708,12 +8824,30 @@ const Contracts = () => {
     const total_value  = contracts.filter(c=>c.status!=="Expired").reduce((s,c)=>s+c.value,0);
     return (
       <div className="fade-in" style={{ display:"flex", flexDirection:"column", gap:20 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:8, flexWrap:"wrap" }}>
           <div>
             <h1 className="serif" style={{ fontSize:30, fontWeight:500, color:C.ink }}>Contracts</h1>
             <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Legally binding agreements for every project</p>
           </div>
-          <Btn icon="plus" onClick={()=>{ setPickType(null); setFields({}); setView("pick"); }}>New Contract</Btn>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {contSelMode ? (
+              <>
+                <span style={{ alignSelf:"center", fontSize:13, color:C.ink, fontWeight:500 }}>{contSelSet.size} selected</span>
+                <button onClick={exitContSelMode} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Cancel</button>
+                <button onClick={deleteSelectedContracts} disabled={!contSelSet.size}
+                  style={{ padding:"7px 14px", background:contSelSet.size?"#c44":"#fff", color:contSelSet.size?"#fff":C.muted, border:`1px solid ${contSelSet.size?"#c44":C.border}`, borderRadius:9, fontSize:12, fontWeight:600, cursor:contSelSet.size?"pointer":"not-allowed", opacity:contSelSet.size?1:.6 }}>
+                  Delete{contSelSet.size?` (${contSelSet.size})`:""}
+                </button>
+              </>
+            ) : (
+              <>
+                {contracts.length > 0 && (
+                  <button onClick={()=>setContSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+                )}
+                <Btn icon="plus" onClick={()=>{ setPickType(null); setFields({}); setView("pick"); }}>New Contract</Btn>
+              </>
+            )}
+          </div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
           <Stat label="Contracts Signed"   value={signed_count}               icon="shield"  color="green"/>
@@ -8724,6 +8858,7 @@ const Contracts = () => {
           <table style={{ width:"100%", borderCollapse:"collapse" }}>
             <thead>
               <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                {contSelMode && <th style={{ padding:"14px 18px", width:36 }}/>}
                 {["ID","Type","Client","Project","Value","Status","Date",""].map(h=>(
                   <th key={h} style={{ textAlign:"left", fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.3, padding:"14px 18px", fontWeight:500 }}>{h}</th>
                 ))}
@@ -8732,11 +8867,18 @@ const Contracts = () => {
             <tbody>
               {contracts.map(c => {
                 const tmpl = CONTRACT_TEMPLATES.find(t=>t.id===c.type);
+                const checked = contSelSet.has(c.id);
+                const onRowClick = () => { if (contSelMode) toggleContSel(c.id); else { setActive(c.id); setSigned(!!c.signature); setView("doc"); } };
                 return (
-                  <tr key={c.id} style={{ borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.cream}
-                    onMouseLeave={e=>e.currentTarget.style.background="#fff"}
-                    onClick={()=>{ setActive(c.id); setSigned(!!c.signature); setView("doc"); }}>
+                  <tr key={c.id} style={{ borderBottom:`1px solid ${C.border}`, cursor:"pointer", background: checked ? "#f4f1ec" : "#fff" }}
+                    onMouseEnter={e=>e.currentTarget.style.background = checked ? "#f4f1ec" : C.cream}
+                    onMouseLeave={e=>e.currentTarget.style.background = checked ? "#f4f1ec" : "#fff"}
+                    onClick={onRowClick}>
+                    {contSelMode && (
+                      <td style={{ padding:"13px 18px", width:36 }} onClick={e=>{ e.stopPropagation(); toggleContSel(c.id); }}>
+                        <input type="checkbox" checked={checked} onChange={()=>toggleContSel(c.id)} style={{ width:18, height:18, cursor:"pointer" }}/>
+                      </td>
+                    )}
                     <td style={{ padding:"13px 18px", fontSize:12, fontFamily:"monospace", fontWeight:600, color:C.ink }}>{c.id}</td>
                     <td style={{ padding:"13px 18px" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -8751,15 +8893,26 @@ const Contracts = () => {
                     <td style={{ padding:"13px 18px", fontSize:13, fontWeight:600, color:C.ink }}>${c.value.toLocaleString()}</td>
                     <td style={{ padding:"13px 18px" }}><StatusBadge s={c.status}/></td>
                     <td style={{ padding:"13px 18px", fontSize:12, color:C.muted }}>{c.signedDate || c.created}</td>
-                    <td style={{ padding:"13px 18px" }}>
+                    <td style={{ padding:"13px 18px" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4 }}>
-                        {[["eye","View"],["edit","Edit"],["send","Send"]].map(([ic,label])=>(
-                          <button key={label} title={label} style={{ width:28, height:28, borderRadius:7, background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", justifyContent:"center" }}
-                            onMouseEnter={e=>{e.currentTarget.style.background=C.warm; e.currentTarget.style.color=C.ink;}}
-                            onMouseLeave={e=>{e.currentTarget.style.background="none"; e.currentTarget.style.color=C.muted;}}>
-                            <Ic d={P[ic]} size={13}/>
-                          </button>
-                        ))}
+                        <button title="View" onClick={()=>{ setActive(c.id); setSigned(!!c.signature); setView("doc"); }}
+                          style={{ width:28, height:28, borderRadius:7, background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", justifyContent:"center" }}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.warm; e.currentTarget.style.color=C.ink;}}
+                          onMouseLeave={e=>{e.currentTarget.style.background="none"; e.currentTarget.style.color=C.muted;}}>
+                          <Ic d={P.eye} size={13}/>
+                        </button>
+                        <button title="Edit" onClick={()=>{ setActive(c.id); setFields({...(c.fields||{})}); setPickType(c.type); setView("edit"); }}
+                          style={{ width:28, height:28, borderRadius:7, background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", justifyContent:"center" }}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.warm; e.currentTarget.style.color=C.ink;}}
+                          onMouseLeave={e=>{e.currentTarget.style.background="none"; e.currentTarget.style.color=C.muted;}}>
+                          <Ic d={P.edit} size={13}/>
+                        </button>
+                        <button title="Duplicate" onClick={()=>duplicateContract(c)}
+                          style={{ width:28, height:28, borderRadius:7, background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex", alignItems:"center", justifyContent:"center" }}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.warm; e.currentTarget.style.color=C.ink;}}
+                          onMouseLeave={e=>{e.currentTarget.style.background="none"; e.currentTarget.style.color=C.muted;}}>
+                          <Ic d={P.copy || P.file} size={13}/>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -10763,6 +10916,37 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
   const [remindMsg,     setRemindMsg]     = useState("");
   const [remindSent,    setRemindSent]    = useState(false);
 
+  // ── Bulk select / delete (Proposals list) ────────────────────────
+  const [propSelMode, setPropSelMode] = useState(false);
+  const [propSelSet,  setPropSelSet]  = useState(() => new Set());
+  const togglePropSel = (id) => setPropSelSet(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const exitPropSelMode = () => { setPropSelMode(false); setPropSelSet(new Set()); };
+  const deleteSelectedProposals = () => {
+    if (!propSelSet.size) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${propSelSet.size} proposal${propSelSet.size===1?"":"s"}? This can't be undone.`)) return;
+    const ids = propSelSet;
+    setProposals(prev => (prev || []).filter(p => !ids.has(p.id)));
+    exitPropSelMode();
+  };
+  const duplicateProposal = (p) => {
+    const newId = `PR${String(Date.now()).slice(-5)}-${Math.floor(Math.random()*99)}`;
+    const copy = {
+      ...p,
+      id: newId,
+      title: (p.title || "") + " (Copy)",
+      status: "Draft",
+      acceptedPkg: null,
+      signerName: null,
+      depositPaid: false,
+      sentAt: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+    };
+    setProposals(prev => [...(prev || []), copy]);
+  };
+
   const REMINDER_TEMPLATES = [
     { label:"Just checking in",       text:"Hi {client}! Just wanted to check in — your proposal is ready to review whenever you get a chance. Let me know if you have any questions!" },
     { label:"Gentle nudge",           text:"Hi {client}! A friendly reminder that your proposal is still waiting for your review. I would love to get your booking confirmed. Feel free to reach out with any questions!" },
@@ -11746,14 +11930,44 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
       {/* ── PROPOSALS TAB ── */}
       {tab === "proposals" && (
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {/* Select / Cancel / Delete toolbar */}
+          {proposals.length > 0 && (
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+              {propSelMode ? (
+                <>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <button onClick={exitPropSelMode} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:13, padding:0 }}>Cancel</button>
+                    <span style={{ fontSize:13, color:C.ink, fontWeight:500 }}>{propSelSet.size} selected</span>
+                  </div>
+                  <button onClick={deleteSelectedProposals} disabled={!propSelSet.size}
+                    style={{ padding:"7px 14px", background:propSelSet.size?"#c44":"#fff", color:propSelSet.size?"#fff":C.muted, border:`1px solid ${propSelSet.size?"#c44":C.border}`, borderRadius:9, fontSize:12, fontWeight:600, cursor:propSelSet.size?"pointer":"not-allowed", opacity:propSelSet.size?1:.6 }}>
+                    Delete{propSelSet.size?` (${propSelSet.size})`:""}
+                  </button>
+                </>
+              ) : (
+                <button onClick={()=>setPropSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+              )}
+            </div>
+          )}
           {proposals.map(p => {
             const pkgList = p.packageIds.map(id=>getPkg(id)).filter(Boolean);
             const accepted = getPkg(p.acceptedPkg);
+            const checked = propSelSet.has(p.id);
+            const onRowClick = () => { if (propSelMode) togglePropSel(p.id); else openDetail(p.id); };
             return (
-              <div key={p.id} onClick={()=>openDetail(p.id)}
-                style={{ background:"#fff", borderRadius:14, border:`1px solid ${C.border}`, padding:"18px 22px", cursor:"pointer", transition:"all .15s", display:"flex", alignItems:"center", gap:16 }}
+              <div key={p.id} onClick={onRowClick}
+                style={{ background:"#fff", borderRadius:14, border: checked ? `2px solid ${C.ink}` : `1px solid ${C.border}`, padding:"18px 22px", cursor:"pointer", transition:"all .15s", display:"flex", alignItems:"center", gap:16 }}
                 onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.08)"}
                 onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                {propSelMode && (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={()=>togglePropSel(p.id)}
+                    onClick={(e)=>e.stopPropagation()}
+                    style={{ width:18, height:18, cursor:"pointer", flexShrink:0 }}
+                  />
+                )}
                 {/* Color strip */}
                 <div style={{ width:4, height:52, borderRadius:4, background: accepted ? "#5c7a68" : (pkgList[0]?.color||C.border), flexShrink:0 }}/>
                 {/* Info */}
@@ -11784,6 +11998,11 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
                     title="Preview as client"
                     style={{ padding:"6px 12px", border:`1px solid ${C.border}`, background:"#fff", borderRadius:8, fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, whiteSpace:"nowrap" }}>
                     👁 Preview
+                  </button>
+                  <button onClick={()=>duplicateProposal(p)}
+                    title="Duplicate"
+                    style={{ padding:"6px 12px", border:`1px solid ${C.border}`, background:"#fff", borderRadius:8, fontSize:11, fontWeight:600, cursor:"pointer", color:C.muted, whiteSpace:"nowrap" }}>
+                    Duplicate
                   </button>
                   {["Sent","Viewed"].includes(p.status) && (
                     <button onClick={()=>openReminder(p.id)}
@@ -12924,6 +13143,36 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKi
   const [pmtForm,        setPmtForm]        = useState({ amount:"", method:"Bank Transfer", date:"", note:"" });
   const [showPayPlan,    setShowPayPlan]     = useState(false); // payment plan modal
 
+  // ── Bulk select / delete / duplicate (Finance invoice list) ──────
+  const [invSelMode, setInvSelMode] = useState(false);
+  const [invSelSet,  setInvSelSet]  = useState(() => new Set());
+  const toggleInvSel = (id) => setInvSelSet(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const exitInvSelMode = () => { setInvSelMode(false); setInvSelSet(new Set()); };
+  const deleteSelectedInvoices = () => {
+    if (!invSelSet.size) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${invSelSet.size} invoice${invSelSet.size===1?"":"s"}? This can't be undone.`)) return;
+    const ids = invSelSet;
+    setInvoices(prev => (prev || []).filter(i => !ids.has(i.id)));
+    exitInvSelMode();
+  };
+  const duplicateInvoice = (inv) => {
+    const newId = `INV-${String(Date.now()).slice(-5)}-${Math.floor(Math.random()*99)}`;
+    const copy = {
+      ...inv,
+      id: newId,
+      status: "Pending",
+      createdAt: new Date().toISOString(),
+      form: inv.form ? { ...inv.form, invNum: newId } : inv.form,
+      remindersSent: 0,
+      lastReminderAt: null,
+    };
+    setInvoices(prev => [...(prev || []), copy]);
+  };
+
   // Create invoice form
   const blankInv = { client:"", project:"", items:[{ id:1, desc:"", qty:1, rate:"" }], dueDate:"", memo:"" };
   const [createForm, setCreateForm] = useState(blankInv);
@@ -13291,17 +13540,38 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKi
 
           {/* Invoice table */}
           <Card style={{ padding:0, overflow:"hidden" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"16px 20px", borderBottom:`1px solid ${C.border}` }}>
-              <h3 style={{ fontSize:14, fontWeight:700, color:C.ink, margin:0 }}>All Invoices</h3>
-              <button onClick={()=>{ setShowCreate(true); setCreateStep(1); setCreateForm(blankInv); }}
-                style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Create Invoice
-              </button>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"16px 20px", borderBottom:`1px solid ${C.border}`, gap:8, flexWrap:"wrap" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <h3 style={{ fontSize:14, fontWeight:700, color:C.ink, margin:0 }}>All Invoices</h3>
+                {invSelMode && <span style={{ fontSize:12, color:C.muted }}>{invSelSet.size} selected</span>}
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {invSelMode ? (
+                  <>
+                    <button onClick={exitInvSelMode} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Cancel</button>
+                    <button onClick={deleteSelectedInvoices} disabled={!invSelSet.size}
+                      style={{ padding:"7px 14px", background:invSelSet.size?"#c44":"#fff", color:invSelSet.size?"#fff":C.muted, border:`1px solid ${invSelSet.size?"#c44":C.border}`, borderRadius:9, fontSize:12, fontWeight:600, cursor:invSelSet.size?"pointer":"not-allowed", opacity:invSelSet.size?1:.6 }}>
+                      Delete{invSelSet.size?` (${invSelSet.size})`:""}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {invoices.length > 0 && (
+                      <button onClick={()=>setInvSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+                    )}
+                    <button onClick={()=>{ setShowCreate(true); setCreateStep(1); setCreateForm(blankInv); }}
+                      style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Create Invoice
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <table style={{ width:"100%", borderCollapse:"collapse" }}>
               <thead>
                 <tr style={{ background:C.cream }}>
+                  {invSelMode && <th style={{ padding:"10px 16px", borderBottom:`1px solid ${C.border}`, width:36 }}/>}
                   {["Invoice","Client / Project","Amount","Status","Due","Reminders",""].map(h=>(
                     <th key={h} style={{ padding:"10px 16px", fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:.4, textAlign:"left", borderBottom:`1px solid ${C.border}` }}>{h}</th>
                   ))}
@@ -13312,37 +13582,46 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKi
                   const od = daysOverdue(inv);
                   const sc = { Paid:C.green, Pending:"#9e7850", Overdue:"#9e5a4a" };
                   const isReminded = reminderSentId === inv.id;
+                  const checked = invSelSet.has(inv.id);
+                  const rowClick = () => { if (invSelMode) toggleInvSel(inv.id); else setSelInv(inv); };
                   return (
-                    <tr key={inv.id} style={{ borderBottom:i<invoices.length-1?`1px solid ${C.border}`:"none", cursor:"pointer", background:"#fff" }}
-                      onMouseEnter={e=>e.currentTarget.style.background=C.cream}
-                      onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
-                      <td style={{ padding:"13px 16px" }} onClick={()=>setSelInv(inv)}>
+                    <tr key={inv.id} style={{ borderBottom:i<invoices.length-1?`1px solid ${C.border}`:"none", cursor:"pointer", background: checked ? "#f4f1ec" : "#fff" }}
+                      onMouseEnter={e=>e.currentTarget.style.background = checked ? "#f4f1ec" : C.cream}
+                      onMouseLeave={e=>e.currentTarget.style.background = checked ? "#f4f1ec" : "#fff"}>
+                      {invSelMode && (
+                        <td style={{ padding:"13px 16px", width:36 }}>
+                          <input type="checkbox" checked={checked} onChange={()=>toggleInvSel(inv.id)} style={{ width:18, height:18, cursor:"pointer" }}/>
+                        </td>
+                      )}
+                      <td style={{ padding:"13px 16px" }} onClick={rowClick}>
                         <p style={{ fontSize:12, fontWeight:700, color:C.ink, margin:0 }}>{inv.id}</p>
                         <p style={{ fontSize:10, color:C.muted, margin:"2px 0 0" }}>{inv.issued}</p>
                       </td>
-                      <td style={{ padding:"13px 16px" }} onClick={()=>setSelInv(inv)}>
+                      <td style={{ padding:"13px 16px" }} onClick={rowClick}>
                         <p style={{ fontSize:13, fontWeight:600, color:C.ink, margin:0 }}>{inv.client}</p>
                         <p style={{ fontSize:11, color:C.muted, margin:"2px 0 0" }}>{inv.project}</p>
                       </td>
-                      <td style={{ padding:"13px 16px" }} onClick={()=>setSelInv(inv)}>
+                      <td style={{ padding:"13px 16px" }} onClick={rowClick}>
                         <p style={{ fontSize:14, fontWeight:700, color:C.ink, margin:0 }}>${inv.total.toLocaleString()}</p>
                       </td>
-                      <td style={{ padding:"13px 16px" }} onClick={()=>setSelInv(inv)}>
+                      <td style={{ padding:"13px 16px" }} onClick={rowClick}>
                         <div>
                           <span style={{ fontSize:11, fontWeight:700, color:sc[inv.status], background:`${sc[inv.status]}18`, padding:"3px 10px", borderRadius:99, display:"inline-block" }}>{inv.status}</span>
                           {od > 0 && <p style={{ fontSize:10, color:"#9e5a4a", margin:"3px 0 0" }}>{od} days overdue</p>}
                         </div>
                       </td>
-                      <td style={{ padding:"13px 16px", fontSize:12, color:od>0?"#9e5a4a":C.muted }} onClick={()=>setSelInv(inv)}>{inv.due}</td>
-                      <td style={{ padding:"13px 16px" }} onClick={()=>setSelInv(inv)}>
+                      <td style={{ padding:"13px 16px", fontSize:12, color:od>0?"#9e5a4a":C.muted }} onClick={rowClick}>{inv.due}</td>
+                      <td style={{ padding:"13px 16px" }} onClick={rowClick}>
                         {inv.remindersSent > 0
                           ? <span style={{ fontSize:11, color:C.muted }}>{inv.remindersSent} sent{inv.lastReminderAt?` · ${inv.lastReminderAt}`:""}</span>
                           : <span style={{ fontSize:11, color:C.border }}>—</span>}
                       </td>
                       <td style={{ padding:"13px 16px" }}>
                         <div style={{ display:"flex", gap:6 }}>
-                          <button onClick={()=>setSelInv(inv)}
+                          <button onClick={(e)=>{ e.stopPropagation(); setSelInv(inv); }}
                             style={{ padding:"5px 11px", border:`1px solid ${C.border}`, borderRadius:7, background:"#fff", fontSize:11, cursor:"pointer", color:C.ink, fontWeight:500 }}>View</button>
+                          <button onClick={(e)=>{ e.stopPropagation(); duplicateInvoice(inv); }}
+                            style={{ padding:"5px 11px", border:`1px solid ${C.border}`, borderRadius:7, background:"#fff", fontSize:11, cursor:"pointer", color:C.muted, fontWeight:500 }}>Duplicate</button>
                           {inv.status !== "Paid" && (
                             <button onClick={e=>{ e.stopPropagation(); sendReminder(inv.id); }}
                               style={{ padding:"5px 11px", border:`1px solid ${isReminded?"#5c7a68":"#9e5a4a"}`, borderRadius:7, background:isReminded?"#edf3ef":"#fdf0ee", fontSize:11, cursor:"pointer", color:isReminded?"#5c7a68":"#9e5a4a", fontWeight:600, transition:"all .2s" }}>
