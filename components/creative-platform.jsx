@@ -19872,15 +19872,47 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brandKit?.studioName, brandKit?.studioPhone, brandKit?.studioWebsite, brandKit?.studioBio, brandKit?.studioAddress?.line1, brandKit?.studioAddress?.city, brandKit?.studioAddress?.state, brandKit?.studioAddress?.zip]);
-  const [profilePhoto, setProfilePhoto] = useState(null);
+  // Profile photo lives on brandKit so it survives logout/login (it's
+  // bundled in the same app_state row that auto-saves on every change).
+  const [profilePhoto, setProfilePhoto] = useState(brandKit?.profilePhoto || null);
+  // Re-hydrate when brandKit prop arrives from the DB after first render.
+  useEffect(() => {
+    if (brandKit?.profilePhoto && brandKit.profilePhoto !== profilePhoto) {
+      setProfilePhoto(brandKit.profilePhoto);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandKit?.profilePhoto]);
   const profilePhotoRef = useRef(null);
   const handleProfilePhoto = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      window.alert("Image is too large — please pick one under 5 MB.");
+      return;
+    }
     const reader = new FileReader();
-    reader.onload = (ev) => setProfilePhoto(ev.target.result);
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      setProfilePhoto(dataUrl);
+      // Persist immediately to brandKit (auto-save in AppShell will flush).
+      if (setBrandKit) setBrandKit(prev => ({ ...(prev || {}), profilePhoto: dataUrl }));
+    };
     reader.readAsDataURL(file);
   };
+  const removeProfilePhoto = () => {
+    setProfilePhoto(null);
+    if (profilePhotoRef.current) profilePhotoRef.current.value = "";
+    if (setBrandKit) setBrandKit(prev => ({ ...(prev || {}), profilePhoto: null }));
+  };
+  // Compute initials from the user's actual name — never hardcode "AK".
+  const computedInitials = (() => {
+    const src = (profile.name || sessionUser?.user_metadata?.full_name || profile.studio || sessionUser?.email || "").trim();
+    if (!src) return "?";
+    if (src.includes("@")) return src[0].toUpperCase();
+    const parts = src.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
   const [saved,  setSaved]  = useState(false);
   const [pwForm, setPwForm] = useState({ current:"", next:"", confirm:"" });
   const [pwSaved,setPwSaved]= useState(false);
@@ -19992,7 +20024,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
           style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, padding:0 }}>← Back</button>
         <h1 className="serif" style={{ fontSize:28, fontWeight:500, color:C.ink, margin:0, flex:1 }}>Account Settings</h1>
         <button onClick={handleSignOut}
-          style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 16px", fontSize:13, color:C.muted, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+          style={{ background:C.ink, border:"none", borderRadius:9, padding:"9px 18px", fontSize:13, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontWeight:600 }}>
           Sign Out
         </button>
       </div>
@@ -20022,7 +20054,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                 <div style={{ width:72, height:72, borderRadius:"50%", background:C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, fontWeight:600, flexShrink:0, overflow:"hidden", position:"relative" }}>
                   {profilePhoto
                     ? <img src={profilePhoto} alt="Profile" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
-                    : "AK"
+                    : computedInitials
                   }
                 </div>
                 {/* Hidden file input */}
@@ -20041,7 +20073,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                   </button>
                   {profilePhoto && (
                     <button
-                      onClick={() => { setProfilePhoto(null); if(profilePhotoRef.current) profilePhotoRef.current.value=""; }}
+                      onClick={removeProfilePhoto}
                       style={{ padding:"8px 14px", background:"#fff", border:`1px solid #f2c0b5`, borderRadius:9, fontSize:13, cursor:"pointer", color:C.red, fontWeight:500 }}>
                       Remove
                     </button>
@@ -22081,7 +22113,10 @@ const BRAND_HEADING_FONTS = [
 const BRAND_KIT_DEFAULT = {
   studioName: "",
   tagline:    "Photography · Film · Creative",
-  initials:   "AK",
+  // Empty by default so the avatar fallback derives initials from the
+  // user's actual name (e.g. "Sen Saelee" → "SS") instead of showing
+  // a meaningless placeholder. Users can override in BrandKit settings.
+  initials:   "",
   primaryColor:   "#b8976a",
   secondaryColor: "#5c7a68",
   darkColor:      "#1f1e1b",
@@ -27676,7 +27711,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
             <Ic d={P.bell} size={15}/>
             {(notifications.some(n => !n.read) || commNotifs.some(n => !n.read)) && <span style={{ position:"absolute", top:5, right:5, width:7, height:7, background:C.red, borderRadius:"50%", border:"2px solid #fff" }}/>}
           </button>
-          <div onClick={() => navGo("account")} style={{ width:34, height:34, borderRadius:9, background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:600, cursor:"pointer" }}>{brandKit.initials||"AK"}</div>
+          <div onClick={() => navGo("account")} style={{ width:34, height:34, borderRadius:9, background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:600, cursor:"pointer", overflow:"hidden" }}>
+            {brandKit?.profilePhoto
+              ? <img src={brandKit.profilePhoto} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+              : (brandKit.initials || (supabaseSession?.user?.user_metadata?.full_name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2))}
+          </div>
         </div>
       </header>
 
@@ -27831,7 +27870,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
             onMouseEnter={e=>e.currentTarget.style.background=C.surface}
             onMouseLeave={e=>e.currentTarget.style.background="transparent"}
             title={isTablet?"Account":undefined}>
-            <div style={{ width:32, height:32, borderRadius:"50%", background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:600, flexShrink:0 }}>{brandKit.initials || (supabaseSession?.user?.user_metadata?.full_name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2)}</div>
+            <div style={{ width:32, height:32, borderRadius:"50%", background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:600, flexShrink:0, overflow:"hidden" }}>
+              {brandKit?.profilePhoto
+                ? <img src={brandKit.profilePhoto} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                : (brandKit.initials || (supabaseSession?.user?.user_metadata?.full_name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2))}
+            </div>
             {!isTablet && <>
               <div style={{ flex:1, minWidth:0 }}>
                 <p style={{ fontSize:13, fontWeight:500, color:"#f5f2ee", overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{brandKit.studioName || supabaseSession?.user?.user_metadata?.full_name || "My Studio"}</p>
@@ -27882,7 +27925,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
               <Ic d={P.bell} size={16}/>
               {(notifications.some(n => !n.read) || commNotifs.some(n => !n.read)) && <span style={{ position:"absolute", top:6, right:6, width:7, height:7, background:C.red, borderRadius:"50%", border:"2px solid #fff" }}/>}
             </button>
-            <div onClick={() => setPage("account")} style={{ width:36, height:36, borderRadius:10, background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:600, cursor:"pointer" }}>{brandKit.initials || (supabaseSession?.user?.user_metadata?.full_name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2)}</div>
+            <div onClick={() => setPage("account")} style={{ width:36, height:36, borderRadius:10, background:brandKit.primaryColor||C.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:600, cursor:"pointer", overflow:"hidden" }}>
+              {brandKit?.profilePhoto
+                ? <img src={brandKit.profilePhoto} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                : (brandKit.initials || (supabaseSession?.user?.user_metadata?.full_name||"?").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2))}
+            </div>
           </div>
         </header>
 
