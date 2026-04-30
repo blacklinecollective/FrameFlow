@@ -27356,6 +27356,19 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
   const [viewMode, setViewMode] = useState("both");
   const projectList = Array.isArray(projects) ? projects : [];
   const currentProj = projectList.find(p => p.id === projId);
+  // Self-heal: if the persisted/passed projId doesn't match any real
+  // project (e.g. seed mock id 1, stale localStorage from before a
+  // project was deleted, etc.), auto-redirect to the first available
+  // project so the user sees a working portal instead of "Gallery Not
+  // Found". Only fires once we have the projects list loaded.
+  useEffect(() => {
+    if (!onSelectProject) return;
+    if (projectList.length === 0) return;          // wait for DB hydration
+    if (currentProj) return;                        // current id is valid
+    const fallback = projectList[0]?.id;
+    if (fallback && fallback !== projId) onSelectProject(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projId, projectList.length]);
   // Editable Home-page customization lives on galleryDelivery[projId].
   // The public portal Home tab reads these and falls back to defaults.
   const projDelivery = (galleryDelivery && galleryDelivery[projId]) || {};
@@ -27536,7 +27549,26 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
           </div>
         </div>
       )}
-      {ready ? (
+      {!projId || !currentProj ? (
+        // No project yet (or stale id) — show a friendly empty state
+        // instead of letting the iframe load /client/null and render
+        // 'Gallery Not Found'.
+        <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:32 }}>
+          <div style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.12)", borderRadius:14, padding:"32px 28px", maxWidth:480, textAlign:"center", color:"#f5f2ee" }}>
+            {projectList.length === 0 ? (
+              <>
+                <p style={{ fontSize:16, fontWeight:600, margin:"0 0 8px" }}>No projects yet</p>
+                <p style={{ fontSize:13, color:"rgba(245,242,238,.65)", lineHeight:1.6, margin:0 }}>Create a project first — every project gets its own client portal that looks just like the iframe preview.</p>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize:16, fontWeight:600, margin:"0 0 8px" }}>Loading your portal…</p>
+                <p style={{ fontSize:13, color:"rgba(245,242,238,.65)", lineHeight:1.6, margin:0 }}>Switching to {projectList[0]?.name || "your first project"}…</p>
+              </>
+            )}
+          </div>
+        </div>
+      ) : ready ? (
         <div style={{ flex:1, display:"flex", flexDirection:"row", gap:14, padding: viewMode === "desktop" ? 0 : "16px", justifyContent: viewMode === "mobile" ? "center" : "stretch", overflow:"auto", minHeight:"calc(100vh - 90px)" }}>
           {/* Desktop frame */}
           {(viewMode === "desktop" || viewMode === "both") && (
@@ -27623,8 +27655,11 @@ function AppShell({ supabaseSession, supabaseClient }) {
     try { return JSON.parse(localStorage.getItem("ff_projDeepLink") || "null"); } catch { return null; }
   }); // { id, tab }
   const [portalProjId, setPortalProjId] = useState(() => {
-    if (typeof window === "undefined") return 1;
-    try { const v = localStorage.getItem("ff_portalProjId"); return v ? Number(v) : 1; } catch { return 1; }
+    // Don't default to 1 — that's the seed mock project ID which doesn't
+    // exist in any real user's database. Start as null and let
+    // ClientPortalPreview pick the first real project on mount.
+    if (typeof window === "undefined") return null;
+    try { const v = localStorage.getItem("ff_portalProjId"); return v ? Number(v) : null; } catch { return null; }
   });
   // Write-through persistence
   useEffect(() => {
