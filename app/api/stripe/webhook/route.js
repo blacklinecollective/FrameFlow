@@ -6,6 +6,8 @@ import { createClient } from "@supabase/supabase-js";
 // account updated, etc.). We verify the signature, then for successful
 // checkout sessions we call a SECURITY DEFINER RPC that flips the
 // matching invoice's status to "Paid" in app_state.
+// Bumped 2026-04-30 to force a redeploy after STRIPE_WEBHOOK_SECRET +
+// SUPABASE_SERVICE_ROLE_KEY env vars were added to Vercel.
 //
 // Required env vars:
 //   STRIPE_SECRET_KEY
