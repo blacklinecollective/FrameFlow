@@ -4997,7 +4997,7 @@ const ProjectInvoiceTab = ({ proj, projInvoices, appInvoices, setAppInvoices, br
           <>
             <div>
               {projInvoices.length > 0 && (
-                <button onClick={() => setInvSelMode(true)} style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:9, padding:"7px 14px", cursor:"pointer", color:C.ink, fontSize:13 }}>Select</button>
+                <button onClick={() => setInvSelMode(true)} style={{ background:C.ink, color:"#fff", border:"none", borderRadius:9, padding:"8px 16px", cursor:"pointer", fontSize:13, fontWeight:500 }}>Select</button>
               )}
             </div>
             <Btn icon="plus" onClick={() => setView("template")}>Create Invoice</Btn>
@@ -8842,7 +8842,7 @@ const Contracts = () => {
             ) : (
               <>
                 {contracts.length > 0 && (
-                  <button onClick={()=>setContSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+                  <button onClick={()=>setContSelMode(true)} style={{ padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>Select</button>
                 )}
                 <Btn icon="plus" onClick={()=>{ setPickType(null); setFields({}); setView("pick"); }}>New Contract</Btn>
               </>
@@ -11945,7 +11945,7 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
                   </button>
                 </>
               ) : (
-                <button onClick={()=>setPropSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+                <button onClick={()=>setPropSelMode(true)} style={{ padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>Select</button>
               )}
             </div>
           )}
@@ -13557,7 +13557,7 @@ const Finance = ({ appInvoices, setAppInvoices, appProjects, crmClients, brandKi
                 ) : (
                   <>
                     {invoices.length > 0 && (
-                      <button onClick={()=>setInvSelMode(true)} style={{ padding:"7px 14px", background:"#fff", color:C.ink, border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontWeight:500, cursor:"pointer" }}>Select</button>
+                      <button onClick={()=>setInvSelMode(true)} style={{ padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>Select</button>
                     )}
                     <button onClick={()=>{ setShowCreate(true); setCreateStep(1); setCreateForm(blankInv); }}
                       style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", background:C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer" }}>
