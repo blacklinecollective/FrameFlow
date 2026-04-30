@@ -19988,11 +19988,51 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
       setShowDeleteConfirm(false);
     }
   };
-  const [socials,setSocials]= useState([
+  // Default platform list. We merge in any saved handle/URL/connected
+  // state from brandKit.socials so the user's links persist across
+  // logout. (No real OAuth — this is just a "save my handles" feature
+  // so the links show up on the photographer's Community profile etc.)
+  const _socialDefaults = [
     { id:"instagram", platform:"Instagram", color:"#e1306c", grad:"linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)", icon:"instagram", connected:false, handle:"", followers:"", posts:0, url:"", desc:"Share photos, stories & reels with your audience" },
     { id:"tiktok",    platform:"TikTok",    color:"#010101", grad:"linear-gradient(135deg,#010101,#2d2d2d)",         icon:"tiktok",    connected:false, handle:"", followers:"—", posts:0, url:"", desc:"Reach new audiences with short-form video content" },
     { id:"facebook",  platform:"Facebook",  color:"#1877f2", grad:"linear-gradient(135deg,#1877f2,#0d5ab5)",         icon:"facebook",  connected:false, handle:"", followers:"", posts:0, url:"", desc:"Connect with your local community & run ads" },
-  ]);
+  ];
+  const _mergeSavedSocials = (saved) => _socialDefaults.map(d => {
+    const match = (saved || []).find(s => s.id === d.id) || {};
+    return { ...d, handle: match.handle || "", url: match.url || "", connected: !!match.connected };
+  });
+  const [socials, setSocials] = useState(() => _mergeSavedSocials(brandKit?.socials));
+  // Re-hydrate when brandKit prop arrives from the DB after first render.
+  useEffect(() => {
+    if (Array.isArray(brandKit?.socials)) {
+      setSocials(_mergeSavedSocials(brandKit.socials));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandKit?.socials]);
+  // Persist trimmed-down social state (only the fields that actually vary
+  // by user) to brandKit on every edit — auto-save flushes it to Supabase.
+  const _persistSocials = (next) => {
+    if (!setBrandKit) return;
+    const slim = next.map(s => ({ id: s.id, handle: s.handle || "", url: s.url || "", connected: !!s.connected }));
+    setBrandKit(prev => ({ ...(prev || {}), socials: slim }));
+  };
+  const updateSocial = (idx, changes) => {
+    setSocials(prev => {
+      const next = prev.map((s,i) => i === idx ? { ...s, ...changes } : s);
+      _persistSocials(next);
+      return next;
+    });
+  };
+  // Build a default profile URL from the handle if one isn't set
+  const defaultUrlFor = (s) => {
+    if (s.url) return s.url;
+    const h = (s.handle || "").trim().replace(/^@/, "");
+    if (!h) return "";
+    if (s.id === "instagram") return `https://instagram.com/${h}`;
+    if (s.id === "tiktok")    return `https://tiktok.com/@${h}`;
+    if (s.id === "facebook")  return `https://facebook.com/${h}`;
+    return "";
+  };
   const [socialCopied, setSocialCopied] = useState(null);
   const [storagePlan,  setStoragePlan]  = useState("250gb"); // current base plan
   const [storageAdded, setStorageAdded] = useState(false);   // purchase feedback
@@ -20229,8 +20269,8 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                     <Ic d={P.share} size={18} style={{ color:"#fff" }}/>
                   </div>
                   <div>
-                    <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>Social Media Integration</p>
-                    <p style={{ fontSize:12, color:"#7c3aed", margin:"3px 0 0" }}>Connected accounts appear on your Community profile and Inquiries inbox. Clients can find and follow you directly.</p>
+                    <p style={{ fontSize:14, fontWeight:600, color:C.ink, margin:0 }}>Social Media Links</p>
+                    <p style={{ fontSize:12, color:"#7c3aed", margin:"3px 0 0" }}>Add your handle for each platform you're on. Saved links appear on your Community profile and as clickable buttons on the public client portal — clients can find and follow you in one tap.</p>
                   </div>
                 </div>
               </Card>
@@ -20256,7 +20296,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                         </span>
                       )}
                       <button
-                        onClick={() => setSocials(prev => prev.map((x,i) => i===si ? {...x, connected:!x.connected} : x))}
+                        onClick={() => updateSocial(si, { connected: !s.connected })}
                         style={{ width:42, height:24, borderRadius:99, background:s.connected?"rgba(255,255,255,.9)":"rgba(255,255,255,.25)", border:"1px solid rgba(255,255,255,.4)", cursor:"pointer", position:"relative", transition:"all .2s", flexShrink:0 }}>
                         <div style={{ width:18, height:18, borderRadius:"50%", background:s.connected?s.color:"#fff", position:"absolute", top:2, left:s.connected?21:2, transition:"left .2s, background .2s", boxShadow:"0 1px 4px rgba(0,0,0,.25)" }}/>
                       </button>
@@ -20289,22 +20329,41 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                               </span>
                               <input
                                 value={s.handle}
-                                onChange={e => setSocials(prev => prev.map((x,i) => i===si ? {...x, handle:e.target.value} : x))}
-                                style={{ flex:1, padding:"10px 12px", border:"none", background:"transparent", fontSize:13, color:C.ink }}/>
+                                onChange={e => updateSocial(si, { handle: e.target.value })}
+                                placeholder={s.id==="facebook" ? "yourpagename" : "yourhandle"}
+                                style={{ flex:1, padding:"10px 12px", border:"none", background:"transparent", fontSize:13, color:C.ink, outline:"none" }}/>
                             </div>
                             <button
-                              onClick={() => { setSocialCopied(s.id); setTimeout(() => setSocialCopied(null), 1800); }}
+                              onClick={async () => {
+                                const link = defaultUrlFor(s);
+                                if (!link) return;
+                                try { await navigator.clipboard.writeText(link); } catch(_) {}
+                                setSocialCopied(s.id); setTimeout(() => setSocialCopied(null), 1800);
+                              }}
                               style={{ padding:"10px 14px", border:`1px solid ${C.border}`, borderRadius:10, background:socialCopied===s.id?C.green:"#fff", color:socialCopied===s.id?"#fff":C.muted, cursor:"pointer", fontSize:12, fontWeight:500, transition:"all .2s", flexShrink:0 }}>
                               {socialCopied===s.id ? "✓ Copied!" : "Copy Link"}
                             </button>
+                          </div>
+                          {/* Optional override: paste a full profile URL if it
+                              doesn't follow the standard handle-based pattern. */}
+                          <div style={{ marginTop:10 }}>
+                            <label style={{ fontSize:11, color:C.muted, display:"block", marginBottom:4, fontWeight:500, textTransform:"uppercase", letterSpacing:.3 }}>Profile URL <span style={{ fontWeight:400, textTransform:"none", letterSpacing:0 }}>(optional)</span></label>
+                            <input
+                              type="url"
+                              value={s.url}
+                              onChange={e => updateSocial(si, { url: e.target.value })}
+                              placeholder={defaultUrlFor({ ...s, url:"" }) || "https://…"}
+                              style={{ width:"100%", padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:10, fontSize:13, background:C.cream, color:C.ink, boxSizing:"border-box", outline:"none" }}/>
+                            <p style={{ fontSize:11, color:C.muted, margin:"4px 0 0" }}>Leave blank to auto-link <code>{(defaultUrlFor({ ...s, url:"" }) || "https://…")}</code></p>
                           </div>
                         </div>
 
                         {/* Action buttons */}
                         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                           <button
-                            onClick={() => window.open(s.url,"_blank")}
-                            style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 16px", background:s.color, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                            onClick={() => { const link = defaultUrlFor(s); if (link) window.open(link,"_blank"); }}
+                            disabled={!defaultUrlFor(s)}
+                            style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 16px", background:s.color, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor: defaultUrlFor(s) ? "pointer" : "not-allowed", opacity: defaultUrlFor(s) ? 1 : 0.5 }}>
                             <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={P[s.icon]}/></svg>
                             Open {s.platform}
                           </button>
@@ -20329,7 +20388,7 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                           <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>Connect your {s.platform} to show your profile in the Community hub and receive direct inquiries.</p>
                         </div>
                         <button
-                          onClick={() => setSocials(prev => prev.map((x,i) => i===si ? {...x, connected:true} : x))}
+                          onClick={() => updateSocial(si, { connected: true })}
                           style={{ display:"flex", alignItems:"center", gap:7, padding:"10px 20px", background:s.color, color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:600, cursor:"pointer", flexShrink:0, whiteSpace:"nowrap" }}>
                           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={P[s.icon]}/></svg>
                           Connect {s.platform}
