@@ -16011,7 +16011,7 @@ const Inquiries = ({ emailTemplates, brandKit }) => {
 };
 
 // ── Calendar ──────────────────────────────────────────────────
-const CalendarPage = ({ availability, setAvailability, bookings, setBookings, calEvents: calEventsProp, setCalEvents: setCalEventsProp }) => {
+const CalendarPage = ({ availability, setAvailability, bookings, setBookings, calEvents: calEventsProp, setCalEvents: setCalEventsProp, supabaseSession }) => {
   const [viewDate,    setViewDate]    = useState(new Date(2026, 3, 1));
   const [calEvents_local, setCalEvents_local] = useState(CALENDAR_EVENTS_SEED);
   const calEvents = calEventsProp || calEvents_local;
@@ -16025,7 +16025,22 @@ const CalendarPage = ({ availability, setAvailability, bookings, setBookings, ca
   const [selectedDay, setSelectedDay] = useState(null);
   const [showModal,   setShowModal]   = useState(false);
   const [newEv,       setNewEv]       = useState({ title:"", time:"", type:"shoot", duration:"", client:"" });
-  const [synced,      setSynced]      = useState({ google:false, apple:false, outlook:false });
+  // ── Calendar subscription (read-only iCal feed) ──────────────────
+  // Anyone with the URL can read the feed. The userId UUID is the
+  // unguessable key — no other auth. Users paste this into Apple
+  // Calendar / Google Calendar / Outlook as a subscribed calendar.
+  const [subModalProvider, setSubModalProvider] = useState(null); // null | "google" | "apple" | "outlook"
+  const [subCopied, setSubCopied] = useState(false);
+  const subscribeUrl = (typeof window !== "undefined" && supabaseSession?.user?.id)
+    ? `${window.location.origin}/api/calendar/${supabaseSession.user.id}`
+    : "";
+  // Webcal scheme — Apple Calendar and Outlook web both honor this and
+  // jump straight into the "Add subscription" prompt.
+  const webcalUrl = subscribeUrl.replace(/^https?:\/\//, "webcal://");
+  // Google Calendar's "Add by URL" deep link.
+  const googleAddUrl = subscribeUrl
+    ? `https://calendar.google.com/calendar/u/0/r/settings/addbyurl?cid=${encodeURIComponent(subscribeUrl)}`
+    : "";
   const [editEv,      setEditEv]      = useState(null);   // event being edited (null = new)
   const [editForm,    setEditForm]    = useState({});     // live form values
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -16090,13 +16105,101 @@ const CalendarPage = ({ availability, setAvailability, bookings, setBookings, ca
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {[["Google","google","#ea4335"],["Apple","apple","#1a1a1a"],["Outlook","outlook","#0078d4"]].map(([lbl,k,col]) => (
-            <button key={k} onClick={() => setSynced(s => ({...s, [k]:!s[k]}))}
-              style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", border:`1px solid ${synced[k]?col:C.border}`, background:synced[k]?col+"14":"#fff", borderRadius:9, fontSize:12, fontWeight:500, color:synced[k]?col:C.muted, cursor:"pointer", transition:"all .15s" }}>
-              {synced[k] ? "✓ " : "+ "}{lbl} Calendar
+            <button key={k} onClick={() => setSubModalProvider(k)}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", border:`1px solid ${C.border}`, background:"#fff", borderRadius:9, fontSize:12, fontWeight:500, color:C.muted, cursor:"pointer", transition:"all .15s" }}>
+              + {lbl} Calendar
             </button>
           ))}
         </div>
       </div>
+
+      {/* Subscription URL modal — pasted into Apple/Google/Outlook
+          as a subscribed calendar. Read-only feed of shoots, project
+          deadlines, and bookings. */}
+      {subModalProvider && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+          onClick={() => setSubModalProvider(null)}>
+          <div onClick={(e)=>e.stopPropagation()}
+            style={{ background:"#fff", borderRadius:14, maxWidth:560, width:"100%", maxHeight:"90vh", overflow:"auto", boxShadow:"0 24px 64px rgba(0,0,0,.18)" }}>
+            <div style={{ padding:"22px 24px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <p style={{ fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:.5, margin:0 }}>Subscribe to FrameFlow Calendar</p>
+                <p style={{ fontSize:16, fontWeight:700, color:C.ink, margin:"4px 0 0", textTransform:"capitalize" }}>{subModalProvider} Calendar</p>
+              </div>
+              <button onClick={() => setSubModalProvider(null)}
+                style={{ width:30, height:30, borderRadius:8, background:C.warm, border:"none", cursor:"pointer", fontSize:18, color:C.muted }}>×</button>
+            </div>
+            <div style={{ padding:"20px 24px" }}>
+              {!subscribeUrl ? (
+                <p style={{ fontSize:13, color:C.muted, lineHeight:1.6 }}>You need to be signed in to subscribe.</p>
+              ) : (
+                <>
+                  <p style={{ fontSize:13, color:C.muted, lineHeight:1.6, margin:"0 0 14px" }}>
+                    Adds your shoots, project deadlines, and bookings as a read-only calendar. Updates automatically as your projects change. Don't share this URL — anyone with it can read your schedule.
+                  </p>
+                  <div style={{ display:"flex", gap:8, marginBottom:18 }}>
+                    <input
+                      readOnly
+                      value={subscribeUrl}
+                      onClick={(e) => e.target.select()}
+                      style={{ flex:1, padding:"10px 12px", border:`1px solid ${C.border}`, borderRadius:9, fontSize:12, fontFamily:"monospace", background:C.cream, color:C.ink, boxSizing:"border-box" }}/>
+                    <button
+                      onClick={async () => {
+                        try { await navigator.clipboard.writeText(subscribeUrl); } catch(_) {}
+                        setSubCopied(true); setTimeout(() => setSubCopied(false), 1800);
+                      }}
+                      style={{ padding:"10px 16px", background:subCopied?"#4a7a57":C.ink, color:"#fff", border:"none", borderRadius:9, fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>
+                      {subCopied ? "✓ Copied" : "Copy"}
+                    </button>
+                  </div>
+
+                  {subModalProvider === "google" && (
+                    <>
+                      <p style={{ fontSize:12, fontWeight:700, color:C.ink, margin:"0 0 8px" }}>Google Calendar</p>
+                      <ol style={{ margin:0, paddingLeft:18, fontSize:13, color:C.muted, lineHeight:1.7 }}>
+                        <li>Click <strong>Open in Google Calendar →</strong> below.</li>
+                        <li>When prompted, click <strong>Add</strong>.</li>
+                        <li>The new calendar appears under <em>Other calendars</em> in Google Calendar.</li>
+                      </ol>
+                      <a href={googleAddUrl} target="_blank" rel="noopener"
+                        style={{ display:"inline-flex", alignItems:"center", gap:6, marginTop:14, padding:"10px 16px", background:"#ea4335", color:"#fff", borderRadius:9, fontSize:13, fontWeight:600, textDecoration:"none" }}>
+                        Open in Google Calendar →
+                      </a>
+                    </>
+                  )}
+                  {subModalProvider === "apple" && (
+                    <>
+                      <p style={{ fontSize:12, fontWeight:700, color:C.ink, margin:"0 0 8px" }}>Apple Calendar (Mac / iPhone / iPad)</p>
+                      <ol style={{ margin:0, paddingLeft:18, fontSize:13, color:C.muted, lineHeight:1.7 }}>
+                        <li><strong>On Mac:</strong> click <strong>Open in Apple Calendar →</strong> below — it'll launch the Calendar app and prompt to add the subscription.</li>
+                        <li><strong>On iPhone/iPad:</strong> open Settings → Calendar → Accounts → Add Account → Other → Add Subscribed Calendar, then paste the URL above.</li>
+                        <li>Or: Calendar app → File → New Calendar Subscription → paste URL.</li>
+                      </ol>
+                      <a href={webcalUrl}
+                        style={{ display:"inline-flex", alignItems:"center", gap:6, marginTop:14, padding:"10px 16px", background:"#1a1a1a", color:"#fff", borderRadius:9, fontSize:13, fontWeight:600, textDecoration:"none" }}>
+                        Open in Apple Calendar →
+                      </a>
+                    </>
+                  )}
+                  {subModalProvider === "outlook" && (
+                    <>
+                      <p style={{ fontSize:12, fontWeight:700, color:C.ink, margin:"0 0 8px" }}>Microsoft Outlook</p>
+                      <ol style={{ margin:0, paddingLeft:18, fontSize:13, color:C.muted, lineHeight:1.7 }}>
+                        <li><strong>Outlook on the web:</strong> Calendar → Add calendar → Subscribe from web → paste the URL above.</li>
+                        <li><strong>Outlook desktop:</strong> File → Account Settings → Internet Calendars → New → paste URL.</li>
+                        <li><strong>Outlook mobile:</strong> link your Outlook to Outlook.com first, then add the subscription via Outlook.com on the web.</li>
+                      </ol>
+                    </>
+                  )}
+                  <p style={{ fontSize:11, color:C.muted, lineHeight:1.6, margin:"18px 0 0", paddingTop:14, borderTop:`1px solid ${C.border}` }}>
+                    Read-only — events flow from FrameFlow into your calendar but not the other way. Two-way sync (your personal events showing up in FrameFlow) requires a separate OAuth integration with each provider.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 264px", gap:16 }}>
         {/* Grid */}
@@ -28008,7 +28111,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
     proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession} saveNow={saveNow}/>,
     forms:     <FormsPage autoSentForms={sentForms}/>,
     inbox:     <Inquiries emailTemplates={emailTemplates} brandKit={brandKit}/>,
-    calendar:  <CalendarPage availability={availability} setAvailability={setAvailability} bookings={bookings} setBookings={setBookings} calEvents={calEvents} setCalEvents={setCalEvents}/>,
+    calendar:  <CalendarPage availability={availability} setAvailability={setAvailability} bookings={bookings} setBookings={setBookings} calEvents={calEvents} setCalEvents={setCalEvents} supabaseSession={supabaseSession}/>,
     design:    <DesignStudio/>,
     community: <Community commNotifs={commNotifs} setCommNotifs={setCommNotifs} brandKit={brandKit} supabaseSession={supabaseSession}/>,
     analytics: <Analytics/>,
