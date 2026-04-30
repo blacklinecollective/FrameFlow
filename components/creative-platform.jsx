@@ -20138,6 +20138,31 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
     setStripeConnected(false);
     setStripeOnboarding(false);
   };
+
+  // Sandbox-only: attach Stripe's `file_identity_document_success`
+  // fixture to the account holder so verification.document clears
+  // automatically. Refuses to run against a live secret key.
+  const [skipVerifyLoading, setSkipVerifyLoading] = useState(false);
+  const skipStripeVerification = async () => {
+    if (!brandKit?.stripeAccountId) return;
+    setSkipVerifyLoading(true);
+    setStripeError("");
+    try {
+      const res = await fetch("/api/stripe/skip-verification", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: brandKit.stripeAccountId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not auto-verify.");
+      // Pull fresh status into the UI immediately.
+      await refreshStripeStatus();
+    } catch (err) {
+      setStripeError(err.message || "Skip-verification failed.");
+    } finally {
+      setSkipVerifyLoading(false);
+    }
+  };
   const [payoutSchedule, setPayoutSchedule] = useState("weekly");
   const PAYOUT_HISTORY = [];
 
@@ -20748,6 +20773,21 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                               Open this account in the Stripe dashboard ↗
                             </a>
                           </p>
+                        )}
+                        {/* Sandbox-only auto-verify button — visible when
+                            verification.document is the blocker. */}
+                        {(stripeStatus?.requirements?.currentlyDue || []).some(r => /verification\.document/.test(r)) && (
+                          <div style={{ marginTop:10 }}>
+                            <button
+                              onClick={skipStripeVerification}
+                              disabled={skipVerifyLoading}
+                              style={{ padding:"8px 14px", background:"#1a1a1a", color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:600, cursor: skipVerifyLoading ? "wait" : "pointer", opacity: skipVerifyLoading ? 0.6 : 1 }}>
+                              {skipVerifyLoading ? "Auto-verifying…" : "Auto-verify (sandbox only)"}
+                            </button>
+                            <p style={{ fontSize:11, color:"#7a5a30", margin:"4px 0 0" }}>
+                              Uses Stripe's <code>file_identity_document_success</code> test fixture. Disabled with live keys.
+                            </p>
+                          </div>
                         )}
                       </div>
                     )}
