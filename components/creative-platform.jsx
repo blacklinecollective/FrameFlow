@@ -7062,7 +7062,7 @@ const Projects = ({ deepLink, setProjDeepLink, goPortal, goProposals, teamMember
         })()}
 
         {/* ── INVOICES ── */}
-        {tab === "invoices" && <ProjectInvoiceTab proj={sel} projInvoices={projInvoices} appInvoices={appInvoices} setAppInvoices={setAppInvoices} brandKit={brandKit} crmClients={crmClients} supabaseSession={supabaseSession} saveNow={saveNow}/>}
+        {tab === "invoices" && <ProjectInvoiceTab proj={proj} projInvoices={projInvoices} appInvoices={appInvoices} setAppInvoices={setAppInvoices} brandKit={brandKit} crmClients={crmClients} supabaseSession={supabaseSession} saveNow={saveNow}/>}
 
         {/* ── PROFITABILITY ── */}
         {tab === "profitability" && (
