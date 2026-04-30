@@ -16,9 +16,9 @@ export async function GET(request) {
   if (!process.env.STRIPE_SECRET_KEY) {
     return new Response("Stripe is not configured (STRIPE_SECRET_KEY missing).", { status: 500 });
   }
-  if (!process.env.STRIPE_SECRET_KEY.startsWith("sk_test_")) {
-    return new Response("Refusing to run setup-webhook with a live secret key.", { status: 400 });
-  }
+  // Works in both sandbox (sk_test_) and live (sk_live_) modes — Stripe
+  // tracks webhook endpoints separately for each, so calling this in
+  // either mode just registers/replaces the endpoint for that mode.
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-12-18.acacia" });
 
   // Compute the webhook URL from the incoming host so this works on any
@@ -77,7 +77,7 @@ export async function GET(request) {
     <li>Add <code>SUPABASE_SERVICE_ROLE_KEY</code> while you're there — get it from <a href="https://supabase.com/dashboard/project/_/settings/api" target="_blank" rel="noopener">Supabase API settings</a>.</li>
     <li>Trigger a redeploy (or push any new commit). Done.</li>
   </ol>
-  <p class="meta">Endpoint id: <code>${created.id}</code> · Listening for <code>checkout.session.completed</code> · Test mode</p>
+  <p class="meta">Endpoint id: <code>${created.id}</code> · Listening for <code>checkout.session.completed</code> · ${process.env.STRIPE_SECRET_KEY.startsWith("sk_live_") ? "<strong style='color:#c0594a'>LIVE MODE</strong>" : "Test mode"}</p>
 </div>
 </body></html>`;
 

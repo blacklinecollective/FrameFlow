@@ -20775,8 +20775,12 @@ const AccountSettings = ({ setPage, supabaseSession, supabaseClient, brandKit, s
                           </p>
                         )}
                         {/* Sandbox-only auto-verify button — visible when
-                            verification.document is the blocker. */}
-                        {(stripeStatus?.requirements?.currentlyDue || []).some(r => /verification\.document/.test(r)) && (
+                            verification.document is the blocker AND we're
+                            running in test mode. In live mode the test
+                            fixture is rejected by Stripe; users must
+                            upload a real ID document. */}
+                        {(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "").startsWith("pk_test_")
+                          && (stripeStatus?.requirements?.currentlyDue || []).some(r => /verification\.document/.test(r)) && (
                           <div style={{ marginTop:10 }}>
                             <button
                               onClick={skipStripeVerification}
