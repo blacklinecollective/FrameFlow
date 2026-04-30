@@ -27356,19 +27356,8 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
   const [viewMode, setViewMode] = useState("both");
   const projectList = Array.isArray(projects) ? projects : [];
   const currentProj = projectList.find(p => p.id === projId);
-  // Self-heal: if the persisted/passed projId doesn't match any real
-  // project (e.g. seed mock id 1, stale localStorage from before a
-  // project was deleted, etc.), auto-redirect to the first available
-  // project so the user sees a working portal instead of "Gallery Not
-  // Found". Only fires once we have the projects list loaded.
-  useEffect(() => {
-    if (!onSelectProject) return;
-    if (projectList.length === 0) return;          // wait for DB hydration
-    if (currentProj) return;                        // current id is valid
-    const fallback = projectList[0]?.id;
-    if (fallback && fallback !== projId) onSelectProject(fallback);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projId, projectList.length]);
+  // No auto-redirect when projId is null — show the chooser instead so
+  // the user can pick which portal to preview.
   // Editable Home-page customization lives on galleryDelivery[projId].
   // The public portal Home tab reads these and falls back to defaults.
   const projDelivery = (galleryDelivery && galleryDelivery[projId]) || {};
@@ -27433,9 +27422,16 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
         <button onClick={onBack}
           style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
             padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11 }}>← Back</button>
+        {/* All Portals: only useful once a project is picked, since the
+            chooser IS the all-portals view. Clears projId to return there. */}
+        {currentProj && onSelectProject && projectList.length > 1 && (
+          <button onClick={() => onSelectProject(null)}
+            style={{ background:"none", border:"1px solid rgba(255,255,255,.2)", color:"#f5f2ee",
+              padding:"5px 12px", borderRadius:7, cursor:"pointer", fontSize:11 }}>← All Portals</button>
+        )}
         <div style={{ display:"flex", flexDirection:"column", lineHeight:1.2 }}>
-          <span style={{ fontSize:13, fontWeight:600 }}>Client Portal Preview</span>
-          <span style={{ fontSize:10, color:"rgba(245,242,238,.55)" }}>This is exactly what your client sees at the shared link</span>
+          <span style={{ fontSize:13, fontWeight:600 }}>{currentProj ? `${currentProj.name} — ${currentProj.client || "Client"}` : "Client Portal Preview"}</span>
+          <span style={{ fontSize:10, color:"rgba(245,242,238,.55)" }}>{currentProj ? "This is exactly what your client sees at the shared link" : "Pick a project below to preview"}</span>
         </div>
         {/* Project switcher — lets the photographer flip between portals
             without leaving the preview. Only renders when we have projects. */}
@@ -27550,23 +27546,64 @@ function ClientPortalPreview({ projId, onBack, saveNow, ownerUserId, projects, o
         </div>
       )}
       {!projId || !currentProj ? (
-        // No project yet (or stale id) — show a friendly empty state
-        // instead of letting the iframe load /client/null and render
-        // 'Gallery Not Found'.
-        <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:32 }}>
-          <div style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.12)", borderRadius:14, padding:"32px 28px", maxWidth:480, textAlign:"center", color:"#f5f2ee" }}>
-            {projectList.length === 0 ? (
-              <>
+        // CHOOSER VIEW — let the photographer pick which client portal
+        // they want to preview. Each project gets its own portal, so we
+        // render a grid of project cards. Clicking one drills in to the
+        // iframe preview for that project.
+        <div style={{ flex:1, padding:"32px 28px", overflowY:"auto" }}>
+          {projectList.length === 0 ? (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:300 }}>
+              <div style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.12)", borderRadius:14, padding:"32px 28px", maxWidth:480, textAlign:"center", color:"#f5f2ee" }}>
                 <p style={{ fontSize:16, fontWeight:600, margin:"0 0 8px" }}>No projects yet</p>
                 <p style={{ fontSize:13, color:"rgba(245,242,238,.65)", lineHeight:1.6, margin:0 }}>Create a project first — every project gets its own client portal that looks just like the iframe preview.</p>
-              </>
-            ) : (
-              <>
-                <p style={{ fontSize:16, fontWeight:600, margin:"0 0 8px" }}>Loading your portal…</p>
-                <p style={{ fontSize:13, color:"rgba(245,242,238,.65)", lineHeight:1.6, margin:0 }}>Switching to {projectList[0]?.name || "your first project"}…</p>
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ maxWidth:920, margin:"0 auto 24px" }}>
+                <h2 style={{ fontSize:20, fontWeight:700, color:"#f5f2ee", margin:"0 0 6px" }}>Choose a Client Portal</h2>
+                <p style={{ fontSize:13, color:"rgba(245,242,238,.6)", margin:0, lineHeight:1.5 }}>
+                  Pick a project to preview its public client portal. This is exactly what your client sees at the shared link.
+                </p>
+              </div>
+              <div style={{ maxWidth:920, margin:"0 auto", display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(260px, 1fr))", gap:16 }}>
+                {projectList.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => onSelectProject && onSelectProject(p.id)}
+                    style={{
+                      background:"rgba(255,255,255,.04)",
+                      border:"1px solid rgba(255,255,255,.12)",
+                      borderRadius:14,
+                      padding:0,
+                      textAlign:"left",
+                      cursor:"pointer",
+                      color:"#f5f2ee",
+                      transition:"transform .12s, border-color .15s, background .15s",
+                      overflow:"hidden",
+                      fontFamily:"inherit",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,.3)"; e.currentTarget.style.background = "rgba(255,255,255,.07)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,.12)"; e.currentTarget.style.background = "rgba(255,255,255,.04)"; }}>
+                    {/* Cover */}
+                    <div style={{ background: p.cover || "linear-gradient(135deg,#2d2d2d,#1a1a1a)", height:96, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <span style={{ fontSize:11, fontWeight:600, color:"rgba(255,255,255,.85)", letterSpacing:1, textTransform:"uppercase" }}>Open Portal →</span>
+                    </div>
+                    {/* Body */}
+                    <div style={{ padding:"14px 16px 16px" }}>
+                      <p style={{ fontSize:14, fontWeight:600, color:"#f5f2ee", margin:"0 0 4px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</p>
+                      <p style={{ fontSize:12, color:"rgba(245,242,238,.65)", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.client || "No client"}</p>
+                      {p.status && (
+                        <span style={{ display:"inline-block", marginTop:8, fontSize:10, fontWeight:600, color:"rgba(245,242,238,.75)", background:"rgba(255,255,255,.08)", padding:"3px 8px", borderRadius:99, textTransform:"uppercase", letterSpacing:.4 }}>
+                          {p.status}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       ) : ready ? (
         <div style={{ flex:1, display:"flex", flexDirection:"row", gap:14, padding: viewMode === "desktop" ? 0 : "16px", justifyContent: viewMode === "mobile" ? "center" : "stretch", overflow:"auto", minHeight:"calc(100vh - 90px)" }}>
@@ -28186,12 +28223,10 @@ function AppShell({ supabaseSession, supabaseClient }) {
         <div style={{ padding: isTablet?"6px 8px":"6px 10px", display:"flex", flexDirection:"column", gap:4 }}>
           <div style={{ display:"flex", gap:4 }}>
             <button onClick={() => {
-                // Open the same per-project portal iframe used everywhere
-                // else. Default to whichever project's portal was last
-                // viewed (portalProjId persists in localStorage); fall back
-                // to the first project on the account.
-                const target = portalProjId || appProjects?.[0]?.id;
-                if (target) setPortalProjId(target);
+                // Always land on the chooser when the user clicks Client
+                // Portal in the main nav — they explicitly want to pick a
+                // project, not jump back into the last one.
+                setPortalProjId(null);
                 setPage("portal");
               }}
               title={isTablet?"Client Portal":undefined}
