@@ -24307,7 +24307,7 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
   const outstanding   = (sel?.totalSpend||0) - (sel?.totalPaid||0);
 
   return (
-    <div className="fade-in" style={{ display:"flex", height:"calc(100vh - 52px)", overflow:"hidden" }}>
+    <div className="fade-in" style={{ display:"flex", height:"calc(100vh - 172px)", minHeight:460, overflow:"hidden" }}>
 
       {/* ── LEFT PANEL: client list ──────────────────────── */}
       <div style={{ width:300, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", background:"#faf9f7", flexShrink:0 }}>
@@ -25331,10 +25331,41 @@ const ClientsPage = ({ clients: clientsProp, setClients: setClientsProp, goProje
   );
 };
 
+// ── Client Work (merged Clients + Projects page) ──────────────
+// One page for everything client-related: a segmented toggle switches
+// between the client CRM view ("By Client") and the project grid
+// ("All Projects"). Both underlying components are preserved intact.
+const ClientWorkPage = ({ initialView, deepLink, clientCount, projectCount, clientsEl, projectsEl }) => {
+  const [view, setView] = useState(deepLink ? "projects" : (initialView || "projects"));
+  // A project deep-link (from Dashboard, a client's project list, etc.)
+  // must always land on the Projects view so the project opens.
+  useEffect(() => { if (deepLink) setView("projects"); }, [deepLink]);
+
+  const segBtn = (id, label, count) => {
+    const active = view === id;
+    return (
+      <button key={id} onClick={() => setView(id)}
+        style={{ padding:"8px 18px", borderRadius:99, border:"none", cursor:"pointer", fontSize:13, fontWeight:active?600:500, background:active?C.ink:"transparent", color:active?"#fff":C.muted, transition:"all .15s", display:"flex", alignItems:"center", gap:7 }}>
+        {label}
+        <span style={{ fontSize:11, fontWeight:600, background:active?"rgba(255,255,255,.18)":"#eceae5", color:active?"#fff":C.muted, padding:"1px 8px", borderRadius:99 }}>{count}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", gap:4, background:"#fff", border:`1px solid ${C.border}`, borderRadius:99, padding:4, alignSelf:"flex-start" }}>
+        {segBtn("projects", "All Projects", projectCount)}
+        {segBtn("clients", "By Client", clientCount)}
+      </div>
+      {view === "clients" ? clientsEl : projectsEl}
+    </div>
+  );
+};
+
 const NAV = [
   { id:"dashboard", label:"Dashboard",   icon:"home"    },
-  { id:"projects",  label:"Projects",    icon:"folder"  },
-  { id:"clients",   label:"Clients",     icon:"users"   },
+  { id:"projects",  label:"Client Work", icon:"folder"  },
   { id:"pipeline",  label:"Pipeline",    icon:"pipe"    },
   { id:"proposals", label:"Proposals",   icon:"propose" },
   { id:"forms",     label:"Forms",       icon:"form"    },
@@ -28104,8 +28135,14 @@ function AppShell({ supabaseSession, supabaseClient }) {
 
   const PAGES = {
     dashboard: <Dashboard setPage={setPage} goProject={goProject} brandKit={brandKit} supabaseSession={supabaseSession} appProjects={appProjects} appInvoices={appInvoices} appThreads={appThreads}/>,
-    projects:  <Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients} saveNow={saveNow}/>,
-    clients:   <ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>,
+    projects:  <ClientWorkPage key="clientwork" initialView="projects" deepLink={projDeepLink}
+                 clientCount={(crmClients||[]).length} projectCount={(appProjects||[]).length}
+                 clientsEl={<ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>}
+                 projectsEl={<Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients} saveNow={saveNow}/>}/>,
+    clients:   <ClientWorkPage key="clientwork" initialView="clients" deepLink={projDeepLink}
+                 clientCount={(crmClients||[]).length} projectCount={(appProjects||[]).length}
+                 clientsEl={<ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>}
+                 projectsEl={<Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients} saveNow={saveNow}/>}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
     pipeline:  <Pipeline/>,
     proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession} saveNow={saveNow}/>,
