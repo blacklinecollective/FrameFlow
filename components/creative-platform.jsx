@@ -12155,8 +12155,50 @@ const ProposalsPage = ({ appProposals, setAppProposals, appPackages, setAppPacka
 };
 
 // ── Pipeline CRM ──────────────────────────────────────────────
-const Pipeline = () => {
+const Pipeline = ({ supabaseSession }) => {
   const [leads,        setLeads]        = useState(INITIAL_LEADS);
+  const [igAccount,    setIgAccount]    = useState(null); // connected Instagram account (or null)
+
+  // ── Instagram leads ──────────────────────────────────────────
+  // DMs arriving on the connected Instagram account are stored in
+  // ig_leads (via /api/instagram/webhook) and surfaced here as
+  // pipeline leads. Stage changes on IG leads persist back to the DB.
+  useEffect(() => {
+    const uid = supabaseSession?.user?.id;
+    if (!uid) return;
+    (async () => {
+      try {
+        const { data: acct } = await supabase.from("ig_accounts")
+          .select("ig_username, connected_at").maybeSingle();
+        setIgAccount(acct || null);
+        const { data: rows } = await supabase.from("ig_leads")
+          .select("*").order("last_message_at", { ascending: false });
+        if (rows && rows.length) {
+          const mapped = rows.map(r => ({
+            id: "ig_" + r.id,
+            igId: r.id,
+            name: r.ig_sender_username ? "@" + r.ig_sender_username : "Instagram DM …" + String(r.ig_sender_id).slice(-4),
+            type: "Instagram DM",
+            value: 0,
+            stage: r.stage || "inquiry",
+            source: "Instagram",
+            email: "", phone: "",
+            notes: r.last_message ? `“${r.last_message}”${r.message_count > 1 ? ` · ${r.message_count} messages` : ""}` : "",
+            date: new Date(r.last_message_at || r.first_message_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }),
+            priority: "normal",
+            avatar: (r.ig_sender_username || "IG").replace(/[^a-zA-Z0-9]/g,"").slice(0,2).toUpperCase() || "IG",
+          }));
+          setLeads(prev => [...prev.filter(l => !l.igId), ...mapped]);
+        }
+      } catch { /* Instagram tables not reachable — pipeline still works */ }
+    })();
+  }, [supabaseSession?.user?.id]);
+
+  const connectInstagram = () => {
+    const uid = supabaseSession?.user?.id;
+    if (!uid) { alert("Log in first, then connect Instagram."); return; }
+    window.location.href = `/api/instagram/login?uid=${uid}`;
+  };
   const [view,         setView]         = useState("kanban");
   const [pipelineTab,  setPipelineTab]  = useState("pipeline"); // pipeline | embed
   const [selectedLead, setSelectedLead] = useState(null);
@@ -12179,7 +12221,7 @@ const Pipeline = () => {
   const TYPE_COLORS = {
     "Wedding Photography":"#9e7060", "Commercial Brand":"#5c7a68",
     "Portrait Session":"#7a8c9e",    "Family Session":"#9e7850",
-    "Videography":"#7a6e8a",
+    "Videography":"#7a6e8a",         "Instagram DM":"#e1306c",
   };
   const SOURCE_COLORS = {
     Instagram:"#e1306c", Referral:C.green, Website:C.blue,
@@ -12189,6 +12231,12 @@ const Pipeline = () => {
   const moveStage = (leadId, stageId) => {
     setLeads(prev => prev.map(l => l.id === leadId ? {...l, stage:stageId} : l));
     setSelectedLead(prev => prev?.id === leadId ? {...prev, stage:stageId} : prev);
+    // Persist stage for Instagram-sourced leads
+    const lead = leads.find(l => l.id === leadId);
+    if (lead?.igId) {
+      supabase.from("ig_leads").update({ stage: stageId }).eq("id", lead.igId)
+        .then(() => {}, () => {});
+    }
   };
 
   const addLead = () => {
@@ -12371,6 +12419,12 @@ const Pipeline = () => {
         </div>
         <div style={{ display:"flex", gap:8 }}>
           {pipelineTab === "pipeline" && <>
+            <button onClick={connectInstagram}
+              title={igAccount ? "Connected — DMs flow into this pipeline. Click to reconnect." : "Link your Instagram account so DMs appear here as leads"}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 14px", border:`1px solid ${igAccount ? "#5c7a68" : "#e1306c"}`, background: igAccount ? "#edf3ef" : "#fff", borderRadius:10, fontSize:13, cursor:"pointer", color: igAccount ? "#3a6a4a" : "#e1306c", fontWeight:600 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>
+              {igAccount ? `@${igAccount.ig_username || "connected"} ✓` : "Connect Instagram"}
+            </button>
             <button onClick={()=>setView(v=>v==="kanban"?"list":"kanban")}
               style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 14px", border:`1px solid ${C.border}`, background:"#fff", borderRadius:10, fontSize:13, cursor:"pointer", color:C.ink }}>
               <Ic d={view==="kanban"?P.list:P.grid} size={14}/>{view==="kanban"?"List View":"Board View"}
@@ -28144,7 +28198,7 @@ function AppShell({ supabaseSession, supabaseClient }) {
                  clientsEl={<ClientsPage clients={crmClients} setClients={setCrmClients} goProject={goProject} clientChats={clientChats} setClientChats={setClientChats} supabaseSession={supabaseSession} brandKit={brandKit}/>}
                  projectsEl={<Projects deepLink={projDeepLink} setProjDeepLink={setProjDeepLink} goPortal={goPortal} goProposals={()=>setPage("proposals")} teamMembers={teamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} galleryDelivery={galleryDelivery} setGalleryDelivery={setGalleryDelivery} clientFavorites={clientFavorites} clientFlags={clientFlags} formRules={formRules} sentForms={sentForms} setSentForms={setSentForms} appProjects={appProjects} setAppProjects={setAppProjects} galleryPhotos={galleryPhotos} setGalleryPhotos={setGalleryPhotos} galleryFolders={galleryFolders} setGalleryFolders={setGalleryFolders} persistGalleryNow={persistGalleryNow} appInvoices={appInvoices} setAppInvoices={setAppInvoices} appVideoDeliverables={appVideoDeliverables} setAppVideoDeliverables={setAppVideoDeliverables} appVideoComments={appVideoComments} setAppVideoComments={setAppVideoComments} brandKit={brandKit} supabaseSession={supabaseSession} projChecklists={projChecklists} setProjChecklists={setProjChecklists} projTimeLogs={projTimeLogs} setProjTimeLogs={setProjTimeLogs} projExpenses={projExpenses} setProjExpenses={setProjExpenses} crmClients={crmClients} saveNow={saveNow}/>}/>,
     team:      <TeamPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} projectTeam={projectTeam} setProjectTeam={setProjectTeam} onLoginAsMember={m=>setActiveTMember(m)}/>,
-    pipeline:  <Pipeline/>,
+    pipeline:  <Pipeline supabaseSession={supabaseSession}/>,
     proposals: <ProposalsPage appProposals={appProposals} setAppProposals={setAppProposals} appPackages={appPackages} setAppPackages={setAppPackages} appProjects={appProjects} crmClients={crmClients} brandKit={brandKit} supabaseSession={supabaseSession} saveNow={saveNow}/>,
     forms:     <FormsPage autoSentForms={sentForms}/>,
     inbox:     <Inquiries emailTemplates={emailTemplates} brandKit={brandKit}/>,
